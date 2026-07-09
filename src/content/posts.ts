@@ -1,23 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
-import { z } from "zod";
+import {
+  createPostMetadataIndexEntry,
+  getPostVisibilityLabel,
+  postFrontmatterSchema,
+  type ContentTierId,
+  type PostAccessRequirement,
+  type PostMetadataIndex,
+  type PostMetadataIndexEntry,
+  type PostVisibility,
+  type PublicationId,
+} from "@/src/domains/content";
 
 const postsDirectory = path.join(process.cwd(), "content", "posts");
 
-const postFrontmatterSchema = z.object({
-  title: z.string().min(1),
-  slug: z.string().min(1),
-  excerpt: z.string().min(1),
-  publishedAt: z.coerce.date(),
-  author: z.string().min(1).default("QSCM"),
-  status: z.enum(["draft", "published"]).default("published"),
-  visibility: z
-    .enum(["public", "free_subscribers", "paid_any", "specific_tiers"])
-    .default("public"),
-});
-
-export type PostVisibility = z.infer<typeof postFrontmatterSchema>["visibility"];
+export type { PostVisibility };
 
 export type PostSummary = {
   slug: string;
@@ -26,14 +24,21 @@ export type PostSummary = {
   author: string;
   status: "draft" | "published";
   visibility: PostVisibility;
+  accessRequirement: PostAccessRequirement;
+  publicationId?: PublicationId;
+  tierIds: ContentTierId[];
+  tags: string[];
   visibilityLabel: string;
   publishedAt: Date;
   publishedAtLabel: string;
+  updatedAt?: Date;
+  canonicalUrl?: string;
 };
 
 export type Post = PostSummary & {
   body: string;
   sourcePath: string;
+  metadata: PostMetadataIndexEntry;
 };
 
 function getPostFiles() {
@@ -44,17 +49,6 @@ function getPostFiles() {
   return fs
     .readdirSync(postsDirectory)
     .filter((fileName) => fileName.endsWith(".md") || fileName.endsWith(".mdx"));
-}
-
-function visibilityLabel(visibility: PostVisibility) {
-  const labels: Record<PostVisibility, string> = {
-    public: "Public",
-    free_subscribers: "Free subscribers",
-    paid_any: "Paid",
-    specific_tiers: "Tier restricted",
-  };
-
-  return labels[visibility];
 }
 
 function formatDate(date: Date) {
@@ -68,6 +62,7 @@ function readPost(fileName: string): Post {
   const file = fs.readFileSync(fullPath, "utf8");
   const parsed = matter(file);
   const frontmatter = postFrontmatterSchema.parse(parsed.data);
+  const metadata = createPostMetadataIndexEntry(frontmatter, fullPath);
 
   return {
     slug: frontmatter.slug,
@@ -76,11 +71,18 @@ function readPost(fileName: string): Post {
     author: frontmatter.author,
     status: frontmatter.status,
     visibility: frontmatter.visibility,
-    visibilityLabel: visibilityLabel(frontmatter.visibility),
+    accessRequirement: metadata.accessRequirement,
+    publicationId: frontmatter.publicationId,
+    tierIds: metadata.tierIds,
+    tags: metadata.tags,
+    visibilityLabel: getPostVisibilityLabel(frontmatter.visibility),
     publishedAt: frontmatter.publishedAt,
     publishedAtLabel: formatDate(frontmatter.publishedAt),
+    updatedAt: frontmatter.updatedAt,
+    canonicalUrl: frontmatter.canonicalUrl,
     body: parsed.content,
     sourcePath: fullPath,
+    metadata,
   };
 }
 
@@ -97,4 +99,11 @@ export function getAllPostSlugs() {
 
 export function getPostBySlug(slug: string) {
   return getAllPosts({ includeDrafts: false }).find((post) => post.slug === slug);
+}
+
+export function getPostMetadataIndex({ includeDrafts = false } = {}): PostMetadataIndex {
+  return getAllPosts({ includeDrafts }).reduce<PostMetadataIndex>((index, post) => {
+    index[post.slug] = post.metadata;
+    return index;
+  }, {});
 }
