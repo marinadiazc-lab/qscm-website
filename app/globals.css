@@ -1,0 +1,216 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: #f8f8f6;
+  color: #222222;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+.site-header,
+.site-footer {
+  display: flex;
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.site-header {
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #deded8;
+}
+
+.site-header nav {
+  display: flex;
+  gap: 18px;
+}
+
+.brand {
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.site-footer {
+  border-top: 1px solid #deded8;
+  color: #666666;
+}
+
+.page {
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: 40px 20px 64px;
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+}
+
+.hero {
+  display: grid;
+  gap: 20px;
+  padding: 40px 0;
+  border-bottom: 1px solid #deded8;
+}
+
+.hero h1,
+.page-title {
+  max-width: 780px;
+  margin: 0;
+  font-size: clamp(2.4rem, 7vw, 5.5rem);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.lede {
+  max-width: 680px;
+  margin: 0;
+  color: #555555;
+  font-size: 1.15rem;
+  line-height: 1.65;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.button,
+.secondary-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  padding: 0 16px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.button {
+  background: #222222;
+  color: #ffffff;
+}
+
+.secondary-button {
+  background: transparent;
+}
+
+.section {
+  padding: 36px 0;
+}
+
+.section h2 {
+  margin: 0 0 16px;
+  font-size: 1.5rem;
+}
+
+.post-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.post-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #deded8;
+  border-radius: 6px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.post-card h3,
+.post-card p {
+  margin: 0;
+}
+
+.post-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #666666;
+  font-size: 0.9rem;
+}
+
+.badge {
+  width: fit-content;
+  border: 1px solid #c9c9c2;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #555555;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.article {
+  max-width: 760px;
+}
+
+.article-header {
+  display: grid;
+  gap: 16px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #deded8;
+}
+
+.article-content {
+  padding-top: 24px;
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+
+.article-content h2 {
+  margin-top: 2rem;
+}
+
+.access-note {
+  border-left: 4px solid #222222;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+
+.wire-panel {
+  display: grid;
+  gap: 16px;
+  border: 1px dashed #999999;
+  border-radius: 6px;
+  padding: 20px;
+  background: #ffffff;
+}
+
+.wire-panel p {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .hero {
+    padding-top: 24px;
+  }
+}
