@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { PostEngagement } from "@/src/components/post-engagement";
 import { getAllPostSlugs, getPostBySlug } from "@/src/content/posts";
 
 type PostPageProps = {
@@ -58,6 +59,7 @@ export default async function PostPage({ params }: PostPageProps) {
         <div className="article-content">
           <MDXRemote source={post.body} />
         </div>
+        <PostEngagement post={post} />
       </article>
     </main>
   );
