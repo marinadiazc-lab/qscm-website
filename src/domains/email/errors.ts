@@ -1,9 +1,16 @@
-export class EmailProviderNotConfiguredError extends Error {
-  constructor(providerName: string, missing: string[] = []) {
-    const suffix =
-      missing.length > 0 ? ` Missing configuration: ${missing.join(", ")}.` : "";
+import type { EmailProviderKey } from "./types";
 
-    super(`${providerName} email provider is not configured.${suffix}`);
-    this.name = "EmailProviderNotConfiguredError";
+export class EmailProviderError extends Error {
+  readonly provider?: EmailProviderKey;
+
+  constructor(message: string, provider?: EmailProviderKey) {
+    super(message);
+    this.name = new.target.name;
+    this.provider = provider;
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+export class EmailProviderConfigurationError extends EmailProviderError {}
+
+export class EmailProviderNotConfiguredError extends EmailProviderError {}
