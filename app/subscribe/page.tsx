@@ -1,4 +1,8 @@
 import type { Metadata } from "next";
+import {
+  EmailCapture,
+  SubscriptionOptions,
+} from "@/src/components/subscription-options";
 
 export const metadata: Metadata = {
   title: "Subscribe",
@@ -10,14 +14,14 @@ export default function SubscribePage() {
     <main className="page stack">
       <header className="hero">
         <p className="badge">Subscribe</p>
-        <h1 className="page-title">Subscription flow placeholder</h1>
+        <h1 className="page-title">Choose a subscription path</h1>
         <p className="lede">
-          This page will connect to magic-link auth, Resend, and Stripe tiers.
+          This page will connect magic-link auth, Resend, and Stripe tiers. For
+          now it shows the intended paths without taking payment.
         </p>
       </header>
-      <section className="wire-panel" aria-label="Subscription form placeholder">
-        <p>Email capture, free subscription, and paid tier checkout will land here.</p>
-      </section>
+      <EmailCapture />
+      <SubscriptionOptions />
     </main>
   );
 }
