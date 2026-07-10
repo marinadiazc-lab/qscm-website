@@ -1,14 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { getSiteUrl, siteName } from "@/src/content/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getSiteUrl()),
   title: {
-    default: "QSCM",
-    template: "%s | QSCM",
+    default: siteName,
+    template: `%s | ${siteName}`,
   },
   description: "A file-authored paid newsletter platform foundation.",
+  alternates: {
+    types: {
+      "application/rss+xml": "/rss.xml",
+    },
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -21,6 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <nav aria-label="Primary navigation">
             <Link href="/posts">Posts</Link>
+            <Link href="/about">About</Link>
             <Link href="/subscribe">Subscribe</Link>
           </nav>
         </header>
