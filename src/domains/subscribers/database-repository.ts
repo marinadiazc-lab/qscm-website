@@ -18,16 +18,33 @@ import { normalizeSubscriberEmail } from "./service";
 
 export class DatabaseSubscriberRepository implements SubscriberRepository {
   async saveSubscriber(subscriber: SubscriberRecord): Promise<SubscriberRecord> {
-    const [stored] = await db
-      .insert(schema.subscribers)
-      .values(toSubscriberRow(subscriber))
-      .onConflictDoUpdate({
-        target: schema.subscribers.id,
-        set: toSubscriberRow(subscriber),
-      })
-      .returning();
+    try {
+      const [stored] = await db
+        .insert(schema.subscribers)
+        .values(toSubscriberRow(subscriber))
+        .onConflictDoUpdate({
+          target: schema.subscribers.id,
+          set: toSubscriberRow(subscriber),
+        })
+        .returning();
 
-    return fromSubscriberRow(stored);
+      return fromSubscriberRow(stored);
+    } catch (error) {
+      if (!isSubscriberEmailUniqueViolation(error)) {
+        throw error;
+      }
+
+      const existing = await this.findSubscriberByEmail(
+        subscriber.publicationId,
+        subscriber.email,
+      );
+
+      if (!existing) {
+        throw error;
+      }
+
+      return existing;
+    }
   }
 
   async findSubscriberById(id: string): Promise<SubscriberRecord | undefined> {
@@ -273,4 +290,17 @@ function fromSyncRow(row: typeof schema.subscriberProviderSyncs.$inferSelect): S
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function isSubscriberEmailUniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const postgresError = error as { code?: string; constraint_name?: string; constraint?: string };
+  return (
+    postgresError.code === "23505" &&
+    (postgresError.constraint_name === "subscribers_publication_email_unique" ||
+      postgresError.constraint === "subscribers_publication_email_unique")
+  );
 }

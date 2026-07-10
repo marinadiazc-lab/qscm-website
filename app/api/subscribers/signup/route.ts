@@ -10,7 +10,7 @@ export async function POST(request: Request) {
 
   try {
     const service = await createSubscriberService();
-    const result = await service.signup({
+    await service.signup({
       publicationId: String(body.publicationId || (await getDefaultPublicationId())),
       email: String(body.email ?? ""),
       name: typeof body.name === "string" ? body.name : undefined,
@@ -20,14 +20,12 @@ export async function POST(request: Request) {
     if (contentType.includes("application/json")) {
       return NextResponse.json({
         ok: true,
-        created: result.created,
-        subscriberId: result.subscriber.id,
-        syncQueued: result.syncQueued,
+        message: "If this address can subscribe, the signup request has been received.",
       });
     }
 
     const url = new URL("/subscribe", request.url);
-    url.searchParams.set("subscribed", result.created ? "1" : "already");
+    url.searchParams.set("subscribed", "1");
     return NextResponse.redirect(url, { status: 303 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Signup failed.";

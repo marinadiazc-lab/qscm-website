@@ -108,7 +108,12 @@ export class SubscriberService {
     const preferences = await this.ensurePreferences(saved.id, now);
     const syncQueued = await this.queueSync(saved.id, "signup", now);
 
-    return { subscriber: saved, preferences, created: true, syncQueued };
+    return {
+      subscriber: saved,
+      preferences,
+      created: saved.id === subscriber.id,
+      syncQueued,
+    };
   }
 
   async linkToVerifiedUser(

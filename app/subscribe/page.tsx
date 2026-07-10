@@ -30,9 +30,7 @@ export default async function SubscribePage({ searchParams }: SubscribePageProps
       </header>
       {subscribed ? (
         <p className="notice" role="status">
-          {subscribed === "already"
-            ? "You are already on the list, and your preferences are ready."
-            : "You are on the free list. Welcome in."}
+          If this address can subscribe, the signup request has been received.
         </p>
       ) : null}
       {error ? (
