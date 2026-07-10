@@ -40,6 +40,7 @@ export interface StripeLikeSubscriptionState extends Omit<SubscriptionEntitlemen
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+export const DEFAULT_PAST_DUE_GRACE_PERIOD_DAYS = 7;
 
 export function decideStripeLikeSubscriptionEntitlement(
   subscription: StripeLikeSubscriptionState | null | undefined,
@@ -189,7 +190,7 @@ export function getPastDueGracePeriodEnd(
     return null;
   }
 
-  return addDays(graceStart, policy.pastDueGracePeriodDays ?? 0);
+  return addDays(graceStart, policy.pastDueGracePeriodDays ?? DEFAULT_PAST_DUE_GRACE_PERIOD_DAYS);
 }
 
 function decisionForOpenAccess(input: {

@@ -11,7 +11,7 @@ This project uses Vitest for fast TypeScript tests around the domain modules and
 
 ## Coverage Added In Wave 1
 
-- Subscriptions and access decisions, including active, free, missing, expired, and past-due grace-period states.
+- Subscriptions and access decisions, including active, free, missing, canceled, unpaid, expired, and the seven-day past-due grace policy for paid web and private podcast access.
 - Auth and account linking decisions, including provider conflicts, verified email matches, confirmation paths, sessions, magic links, and repository copies.
 - Podcast private token lifecycle, entitlement-gated show/episode access, feed sorting, limits, and denied episode tracking.
 - Comments and email behavior, including comment validation, public/privacy-safe comment projections, moderation queues, contact upserts, and send dedupe.

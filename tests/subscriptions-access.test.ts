@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_PAST_DUE_GRACE_PERIOD_DAYS,
   decideSubscriptionEntitlement,
   getPastDueGracePeriodEnd,
 } from "../src/domains/subscriptions";
@@ -55,6 +56,19 @@ describe("subscription entitlement decisions", () => {
       allowed: false,
       reason: "access_period_ended",
       status: "active",
+    });
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "expired",
+          currentPeriodEnd: "2026-07-01T00:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "access_period_ended",
+      status: "expired",
     });
   });
 
@@ -130,6 +144,96 @@ describe("subscription entitlement decisions", () => {
       allowed: false,
       reason: "payment_required",
       status: "past_due",
+    });
+  });
+
+  it("uses the seven-day launch grace policy for web and private podcast access", () => {
+    const decision = decideSubscriptionEntitlement(
+      {
+        status: "past_due",
+        tierId: "founding",
+        entitlementKeys: ["paid_content", "private_podcast"],
+        currentPeriodEnd: "2026-07-09T12:00:00.000Z",
+      },
+      { now },
+    );
+
+    expect(DEFAULT_PAST_DUE_GRACE_PERIOD_DAYS).toBe(7);
+    expect(decision).toMatchObject({
+      allowed: true,
+      reason: "past_due_grace_period",
+      status: "past_due",
+      tierId: "founding",
+      entitlementKeys: ["paid_content", "private_podcast"],
+    });
+    expect(decision.gracePeriodEndsAt?.toISOString()).toBe("2026-07-16T12:00:00.000Z");
+  });
+
+  it("maps grace_period, unpaid, canceled, and expired states to access decisions", () => {
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "grace_period",
+          currentPeriodEnd: "2026-07-09T12:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: true,
+      reason: "past_due_grace_period",
+      status: "grace_period",
+    });
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "unpaid",
+          accessEndsAt: "2026-07-11T12:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: true,
+      reason: "unpaid_with_remaining_access",
+      status: "unpaid",
+    });
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "unpaid",
+          accessEndsAt: "2026-07-09T12:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "payment_required",
+      status: "unpaid",
+    });
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "canceled",
+          currentPeriodEnd: "2026-07-11T12:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: true,
+      reason: "canceled_with_remaining_period",
+      status: "canceled",
+    });
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "expired",
+          currentPeriodEnd: "2026-07-09T12:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "access_period_ended",
+      status: "expired",
     });
   });
 
