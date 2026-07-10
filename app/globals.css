@@ -407,7 +407,8 @@ a {
 }
 
 .engagement-header h2,
-.comment-form h3 {
+.comment-form h3,
+.comment-list h3 {
   margin: 8px 0 0;
 }
 
@@ -427,6 +428,49 @@ a {
 
 .form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.comment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.comment-list ol {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.comment-list li {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #deded8;
+  border-radius: 6px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.comment-list p,
+.form-status,
+.muted {
+  margin: 0;
+}
+
+.comment-list span,
+.form-status,
+.muted {
+  color: #666666;
+  font-size: 0.92rem;
+}
+
+.hidden-field {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
 
 input,

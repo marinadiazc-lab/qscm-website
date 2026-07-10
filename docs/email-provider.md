@@ -34,6 +34,22 @@ send only from the reserved intent, and mark later attempts as
 tests and development examples, but the durable guarantee should live in the
 app database.
 
+## Post Sharing By Email
+
+M09 adds the post email-share foundation through the engagement service. The
+route records an `email` share event immediately and can call any configured
+`EmailProvider` through `sendTransactional`. In the default app wiring no live
+provider is required; without a provider, the route returns a recorded state and
+does not attempt delivery.
+
+Follow-up provider work should attach a real `EmailProvider`, create durable
+send intents before calling the provider, and decide the approved sender/from
+identity for reader-to-reader shares.
+
+Email-share dedupe keys and local share context must not include the raw
+recipient email address. Use a normalized email hash in identifiers and reserve
+the raw recipient address only for the provider `to` field at send time.
+
 ## Future Kit Adapter
 
 Kit can be added later as another `EmailProvider` implementation if creator CRM
