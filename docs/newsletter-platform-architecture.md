@@ -14,17 +14,16 @@ These decisions should guide implementation unless changed later:
 - Do not build a WYSIWYG editor for posts in the first architecture.
 - Email provider default is Resend, behind an `EmailProvider` abstraction. Kit can remain a later adapter if needed.
 - Paid cancellations keep access until the paid period ends.
-- Failed-payment access is a local entitlement policy derived from Stripe subscription state, not blindly delegated to Stripe redirects.
+- Failed-payment access uses a 7-day local grace period for both web access and private podcast access. Stripe subscription state informs the app, but app-local entitlement state decides access.
 - Comments publish immediately by default; spam/rate limits apply, and AI moderation can be added later.
 - Private podcast delivery should be compatibility-first: private RSS feed tokens plus obscure CDN audio URLs.
+- Launch podcast packaging is one private show with tier-filtered episodes, not separate tier-specific shows.
 - Auth should support Google, Facebook, Apple, and magic-link email.
+- Launch editorial roles are `admin`, `editor`, `author`, `moderator`, and `support`, plus reader/subscriber accounts.
+- Launch paid geography is United States only, currency is USD only, and Stripe Tax is required before live paid checkout.
+- Newsletter/broadcast content is app-generated from Markdown/MDX posts and sent through Resend using app-owned `send_intent` dedupe.
 
-Remaining important questions:
-
-1. Who owns editorial operations: one admin, a small team with roles, or many authors/editors?
-2. Is private podcast access one show for all paid users, tier-specific shows, or one show with tier-filtered episodes?
-3. Will the site need custom domains, localization, or multiple currencies in the first year?
-4. What exact failed-payment grace period should be used for web access and podcast access?
+See `docs/product-decisions.md` for the dated product policy decision log, rationale, and verification notes.
 
 ## B. Proposed Technical Architecture
 
@@ -42,7 +41,7 @@ Recommended shape:
 - Content: Markdown/MDX files for posts, compiled at build time or through static regeneration. Store only dynamic overlays in the database: access rules, comments, likes, subscribers, billing, and email sync state.
 - Media: object storage plus CDN. Prefer S3-compatible storage or Vercel Blob for general files. For podcast audio, start with stable HTTPS CDN URLs using obscure object keys because podcast app compatibility is more important than strict media DRM at launch.
 - Rate limiting/queues: Redis-compatible store such as Upstash for rate limits and lightweight jobs. Use a real background job runner later if publishing/sync grows.
-- Admin/editorial: built into the app initially for dynamic operations such as subscribers, comments, tiers, access grants, and media. Post authoring remains file-based.
+- Admin/editorial: built into the app initially for dynamic operations such as subscribers, comments, tiers, access grants, media, moderation, support, and broadcast approvals. Post authoring remains file-based.
 
 High-level modules:
 
@@ -114,7 +113,7 @@ Start with one row. Add `publication_id` to content, tiers, subscribers, podcast
 - `email_verified_at`
 - `display_name`
 - `avatar_url`
-- `role`: `reader`, `author`, `editor`, `admin`
+- `role`: `reader`, `author`, `editor`, `moderator`, `support`, `admin`
 - `status`: `active`, `disabled`, `deleted`
 - `primary_subscriber_id`
 - timestamps
@@ -184,6 +183,8 @@ Start with one row. Add `publication_id` to content, tiers, subscribers, podcast
 - timestamps
 
 Rule for disabled intervals: disabling monthly or annual billing stops new checkout, upgrade, or downgrade selection for that interval. Existing subscriptions remain valid on their current Stripe price until canceled, changed by the subscriber, migrated by an explicit admin action, or ended by policy. Never delete historical prices.
+
+Launch prices should be US/USD only. Stripe Tax is required before live paid checkout.
 
 `subscriptions`
 
@@ -395,6 +396,8 @@ Recommend podcast episodes as a separate content type, with optional linked post
 - `status`
 - timestamps
 
+Launch uses one private show. Tier packaging is represented by episode visibility and access rules inside that show. Tier-specific shows are deferred until a later product decision.
+
 `podcast_episodes`
 
 - `id`
@@ -496,6 +499,8 @@ Only store a hash of the full feed token. Show the full token once at generation
 - `synced_segments`
 - `desired_custom_fields`
 - `synced_custom_fields`
+
+Newsletter and broadcast sends are generated from app-owned Markdown/MDX posts and sent through Resend. Every send path should reserve a local `send_intent` with a stable dedupe key before calling the provider.
 
 `webhook_event_logs`
 
@@ -864,12 +869,9 @@ Settled decisions:
 - Comments publish immediately after basic checks.
 - Auth includes OAuth plus magic-link email.
 
-Decisions still to make before coding:
+Remaining decisions before coding:
 
-- Failed-payment grace-period length.
-- Who owns broadcast composition: Resend UI, app UI, or generated email from Markdown posts.
 - Whether annual/monthly prices are created manually in Stripe Dashboard or managed from the admin UI.
-- Editorial roles and workflow depth for the first admin version.
 
 ## Notes From Current Official Docs Checked
 
