@@ -5,6 +5,8 @@ Date: 2026-07-09
 
 The auth domain defines the early account model for readers, authors, and admins. It does not include Next.js routes or provider SDK code yet; those can wire into the exported types, pure service decisions, and in-memory repository when UI work begins.
 
+Launch admin/dashboard work should expand the role model to match the M01 product policy: `reader`, `author`, `editor`, `moderator`, `support`, and `admin`. Subscriber access is handled through subscription/entitlement state attached to a reader account, not by assigning a separate staff role.
+
 ## OAuth linking
 
 OAuth providers are `google`, `facebook`, and `apple`. `email_magic_link` is modeled as an auth provider too, but it is not treated as OAuth.
@@ -27,6 +29,13 @@ The stored token should be a hash, not the raw emailed token. Email delivery can
 
 ## Admin checks
 
-Users carry role strings: `reader`, `author`, and `admin`. Use `isAdminUser` or `hasAuthRole(user, "admin")` for admin gates.
+The current skeleton carries role strings: `reader`, `author`, and `admin`. Use `isAdminUser` or `hasAuthRole(user, "admin")` for admin gates while this skeleton is still small.
+
+Before enabling the dashboard/admin workflows:
+
+- Add `editor` for publishing, scheduling, metadata, and author review.
+- Add `moderator` for comment queues, spam handling, and moderation audit context.
+- Add `support` for subscriber, entitlement, feed-token, and documented billing-support workflows.
+- Keep `reader` as the default public account role for profile/session management, comments, free-subscriber content, and paid content when an active entitlement allows it.
 
 Role checks should also require an active user. The helper functions return false for disabled users so route handlers and future server actions can share the same guard behavior.

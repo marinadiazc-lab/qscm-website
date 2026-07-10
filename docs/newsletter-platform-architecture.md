@@ -184,7 +184,7 @@ Start with one row. Add `publication_id` to content, tiers, subscribers, podcast
 
 Rule for disabled intervals: disabling monthly or annual billing stops new checkout, upgrade, or downgrade selection for that interval. Existing subscriptions remain valid on their current Stripe price until canceled, changed by the subscriber, migrated by an explicit admin action, or ended by policy. Never delete historical prices.
 
-Launch prices should be US/USD only. Evaluate and configure Stripe Tax before live paid charges.
+Launch prices should be US/USD only. Stripe Tax is required before live paid checkout.
 
 `subscriptions`
 
@@ -869,12 +869,9 @@ Settled decisions:
 - Comments publish immediately after basic checks.
 - Auth includes OAuth plus magic-link email.
 
-Decisions still to make before coding:
+Remaining decisions before coding:
 
-- Failed-payment grace-period length.
-- Who owns broadcast composition: Resend UI, app UI, or generated email from Markdown posts.
 - Whether annual/monthly prices are created manually in Stripe Dashboard or managed from the admin UI.
-- Editorial roles and workflow depth for the first admin version.
 
 ## Notes From Current Official Docs Checked
 
