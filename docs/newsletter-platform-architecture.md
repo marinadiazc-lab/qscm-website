@@ -48,6 +48,8 @@ High-level modules:
 - `content`: Markdown/MDX posts, pages, podcast episodes, media.
 - `identity`: users, OAuth accounts, sessions, roles.
 - `subscriptions`: tiers, access grants, entitlements.
+- `subscribers`: free subscriber signup, preference state, account linking,
+  delivery health, import/export, and provider sync state.
 - `billing`: Stripe checkout, portal, webhooks, reconciliation.
 - `email`: Resend sync, transactional email, and newsletter-send coordination.
 - `podcast`: private RSS tokens, feed generation, episode entitlement checks.
@@ -78,6 +80,8 @@ Post content strategy:
 - The compiled site reads posts from the filesystem and renders them statically where possible.
 - The database stores dynamic overlays that cannot live safely in Git: comments, likes, subscriber state, Stripe state, private feed tokens, email sends, and optional access-rule overrides.
 - This keeps writing portable and editor-agnostic while still supporting paid access and engagement.
+
+Current subscriber implementation details live in `docs/subscribers.md`.
 
 Why not a headless CMS first:
 
