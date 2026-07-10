@@ -8,10 +8,10 @@ import type { AuthAccount, AuthRepository, AuthSession, AuthUser } from "../inde
 import {
   AUTH_SESSION_COOKIE,
   authSessionStatusForTime,
-  canConsumeMagicLink,
-  consumeMagicLinkRequest,
+  buildMagicLinkUrl,
   createAuthId,
   createOpaqueToken,
+  getAuthBaseUrl,
   hashAuthToken,
   magicLinkExpiresAt,
   normalizeAuthEmail,
@@ -92,7 +92,7 @@ export async function getCurrentAuthSession(now = new Date()): Promise<
 export async function requestMagicLink(input: {
   email: string;
   redirectTo?: string;
-  baseUrl: string;
+  baseUrl?: string;
   now?: Date;
 }): Promise<RequestMagicLinkResult> {
   const repository = await getAuthRepository();
@@ -108,17 +108,16 @@ export async function requestMagicLink(input: {
     expiresAt: magicLinkExpiresAt(now),
     redirectTo: sanitizeRedirect(input.redirectTo),
   });
-  const magicLinkUrl = new URL("/api/auth/magic-link/consume", input.baseUrl);
-  magicLinkUrl.searchParams.set("token", token);
-
-  if (request.redirectTo) {
-    magicLinkUrl.searchParams.set("redirectTo", request.redirectTo);
-  }
+  const magicLinkUrl = buildMagicLinkUrl({
+    baseUrl: input.baseUrl ?? getAuthBaseUrl(),
+    token,
+    redirectTo: request.redirectTo,
+  });
 
   return {
     delivery: await deliverMagicLink({
       email,
-      magicLinkUrl: magicLinkUrl.toString(),
+      magicLinkUrl,
       requestId: request.id,
     }),
   };
@@ -130,25 +129,25 @@ export async function consumeMagicLinkToken(input: {
 }): Promise<ConsumeMagicLinkResult> {
   const repository = await getAuthRepository();
   const now = input.now ?? new Date();
-  const request = await repository.findMagicLinkRequestByTokenHash(hashAuthToken(input.token));
+  const tokenHash = hashAuthToken(input.token);
+  const request = await repository.claimMagicLinkRequest(tokenHash, now);
 
   if (!request) {
-    return { status: "invalid", message: "That sign-in link is not valid." };
-  }
+    const existingRequest = await repository.findMagicLinkRequestByTokenHash(tokenHash);
 
-  if (!canConsumeMagicLink(request, now)) {
-    const status = request.status === "requested" ? "expired" : "already_used";
+    if (!existingRequest) {
+      return { status: "invalid", message: "That sign-in link is not valid." };
+    }
 
-    if (status === "expired") {
-      await repository.updateMagicLinkRequestStatus(request.id, "expired", now);
+    if (existingRequest.status === "requested" && existingRequest.expiresAt <= now) {
+      await repository.updateMagicLinkRequestStatus(existingRequest.id, "expired", now);
+
+      return { status: "expired", message: "That sign-in link has expired." };
     }
 
     return {
-      status,
-      message:
-        status === "expired"
-          ? "That sign-in link has expired."
-          : "That sign-in link has already been used.",
+      status: "already_used",
+      message: "That sign-in link has already been used.",
     };
   }
 
@@ -162,9 +161,8 @@ export async function consumeMagicLinkToken(input: {
     createdAt: now,
     expiresAt: sessionExpiresAt(now),
   });
-  const consumed = consumeMagicLinkRequest(request, now, session.id);
 
-  await repository.saveMagicLinkRequest({ ...consumed, userId: user.id });
+  await repository.saveMagicLinkRequest({ ...request, userId: user.id, sessionId: session.id });
   await setSessionCookie(sessionToken, session.expiresAt);
 
   return { status: "authenticated", user, session };

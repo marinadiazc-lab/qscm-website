@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { requestMagicLink } from "@/src/domains/auth/server/runtime";
-import { getSiteUrl } from "@/src/content/site";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
@@ -16,7 +15,6 @@ export async function POST(request: Request) {
     await requestMagicLink({
       email,
       redirectTo,
-      baseUrl: getBaseUrl(request),
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes("DATABASE_URL")) {
@@ -30,10 +28,4 @@ export async function POST(request: Request) {
     new URL("/login?status=magic-link-requested", request.url),
     303,
   );
-}
-
-function getBaseUrl(request: Request): string {
-  const origin = request.headers.get("origin");
-
-  return origin ?? getSiteUrl();
 }

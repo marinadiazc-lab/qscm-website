@@ -40,6 +40,10 @@ export interface AuthRepository {
   findMagicLinkRequestByTokenHash(
     tokenHash: MagicLinkTokenHash,
   ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
+  claimMagicLinkRequest(
+    tokenHash: MagicLinkTokenHash,
+    claimedAt: Date,
+  ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
   listMagicLinkRequestsForEmail(email: string): MagicLinkRequest[] | Promise<MagicLinkRequest[]>;
   updateMagicLinkRequestStatus(
     id: MagicLinkRequestId,
@@ -192,6 +196,29 @@ export class InMemoryAuthRepository implements AuthRepository {
     );
 
     return request ? cloneMagicLinkRequest(request) : undefined;
+  }
+
+  claimMagicLinkRequest(
+    tokenHash: MagicLinkTokenHash,
+    claimedAt: Date,
+  ): MagicLinkRequest | undefined {
+    const request = Array.from(this.magicLinkRequests.values()).find(
+      (candidate) => candidate.tokenHash === tokenHash,
+    );
+
+    if (!request || request.status !== "requested" || request.expiresAt <= claimedAt) {
+      return undefined;
+    }
+
+    const claimed: MagicLinkRequest = {
+      ...request,
+      status: "consumed",
+      consumedAt: claimedAt,
+    };
+
+    this.magicLinkRequests.set(claimed.id, cloneMagicLinkRequest(claimed));
+
+    return cloneMagicLinkRequest(claimed);
   }
 
   listMagicLinkRequestsForEmail(email: string): MagicLinkRequest[] {

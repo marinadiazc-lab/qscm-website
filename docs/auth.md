@@ -7,9 +7,9 @@ The auth domain defines the account model, conservative provider-linking decisio
 
 Launch roles are `reader`, `author`, `editor`, `moderator`, `support`, and `admin`. Subscriber access is handled through subscription/entitlement state attached to a reader account, not by assigning a separate staff role.
 
-## Auth foundation decision
+## Auth foundation selection
 
-M04 uses a first-party Next.js server-cookie foundation instead of adding Auth.js or Better Auth in this PR.
+M04 selects a first-party Next.js server-cookie foundation instead of Auth.js or Better Auth for this milestone.
 
 Rationale:
 
@@ -23,6 +23,15 @@ The implementation still follows the same integration boundary an auth library w
 ## Environment variables
 
 Database-backed auth routes require `DATABASE_URL`.
+
+Magic-link emails are built from the configured canonical app URL. The app does not trust the inbound request `Origin` header for token links.
+
+URL precedence:
+
+- `AUTH_APP_URL`
+- `NEXT_PUBLIC_SITE_URL`
+- `VERCEL_PROJECT_PRODUCTION_URL`
+- `http://localhost:3000` for local fallback
 
 OAuth providers are disabled unless both credentials for that provider are present:
 
@@ -57,13 +66,15 @@ Manual/admin account merges should remain a documented support operation: inspec
 
 Magic-link requests have a lifecycle status of `requested`, `consumed`, `expired`, or `revoked`. A request can only be consumed while it is still `requested` and before `expiresAt`.
 
-The stored token is a SHA-256 hash, not the raw emailed token. `/api/auth/magic-link` creates an expiring request. `/api/auth/magic-link/consume` consumes the token once, creates or finds a reader user, links the `email_magic_link` account, creates a durable session, and sets the HTTP-only `qscm_session` cookie.
+The stored token is a SHA-256 hash, not the raw emailed token. `/api/auth/magic-link` creates an expiring request. `/api/auth/magic-link/consume` first claims the token through the repository contract by atomically moving the matching row from `requested` to `consumed` before any user or session is created. If the claim fails, no session is minted. After a successful claim, the route creates or finds a reader user, links the `email_magic_link` account, creates a durable session, stores the session id on the consumed request, and sets the HTTP-only `qscm_session` cookie.
 
 Real email delivery is deliberately not implemented here. The route returns the same safe response whether delivery is available or not. M06 should connect `deliverMagicLink` to the transactional `EmailProvider`/Resend send-intent flow.
 
 ## Route guards
 
 Use `getCurrentAuthSession` for server-only session lookup and `requireActiveUser`, `requireAuthRole`, or `requireAnyAuthRole` for protected route handlers and future server actions.
+
+`/api/admin/auth-check` is the minimal M04 protected server surface. It requires an active `admin` user and returns 401 for anonymous/disabled users and 403 for active users without the admin role. Broader dashboard UI stays out of this milestone.
 
 Role intent:
 

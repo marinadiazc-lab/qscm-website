@@ -208,6 +208,28 @@ export class DrizzleAuthRepository implements AuthRepository {
     return row ? magicLinkFromRow(row) : undefined;
   }
 
+  async claimMagicLinkRequest(
+    tokenHash: MagicLinkTokenHash,
+    claimedAt: Date,
+  ): Promise<MagicLinkRequest | undefined> {
+    const [row] = await this.db
+      .update(schema.magicLinkRequests)
+      .set({
+        status: "consumed",
+        consumedAt: claimedAt,
+      })
+      .where(
+        and(
+          eq(schema.magicLinkRequests.tokenHash, tokenHash),
+          eq(schema.magicLinkRequests.status, "requested"),
+          sql`${schema.magicLinkRequests.expiresAt} > ${claimedAt}`,
+        ),
+      )
+      .returning();
+
+    return row ? magicLinkFromRow(row) : undefined;
+  }
+
   async listMagicLinkRequestsForEmail(email: string): Promise<MagicLinkRequest[]> {
     const rows = await this.db
       .select()
