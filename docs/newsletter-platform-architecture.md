@@ -20,7 +20,7 @@ These decisions should guide implementation unless changed later:
 - Launch podcast packaging is one private show with tier-filtered episodes, not separate tier-specific shows.
 - Auth should support Google, Facebook, Apple, and magic-link email.
 - Launch editorial roles are `admin`, `editor`, `author`, `moderator`, and `support`, plus reader/subscriber accounts.
-- Launch paid geography is United States only, currency is USD only, and Stripe Tax must be evaluated before live charges.
+- Launch paid geography is United States only, currency is USD only, and Stripe Tax is required before live paid checkout.
 - Newsletter/broadcast content is app-generated from Markdown/MDX posts and sent through Resend using app-owned `send_intent` dedupe.
 
 See `docs/product-decisions.md` for the dated product policy decision log, rationale, and verification notes.
