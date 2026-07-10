@@ -71,7 +71,7 @@ The initial schema includes:
 - subscribers: subscriber lifecycle status, preferences, email provider sync state
 - subscriptions: tiers, prices, Stripe/free/gift/admin-comped subscriptions, entitlement grants
 - content overlays: publication records, MDX metadata, source path/hash, access rules, overlays
-- engagement: private comment fields, moderation audit entries, likes, shares
+- engagement: private comment fields, moderation audit entries, persisted likes, share events, anonymous actor hashes
 - podcast/media: media assets, shows, episodes, private feed token hashes, token audit events
 - operations: webhook event logs with provider/event uniqueness, admin audit logs
 
