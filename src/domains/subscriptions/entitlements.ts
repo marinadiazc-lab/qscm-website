@@ -27,12 +27,23 @@ export type StripeLikeSubscriptionStatus = Extract<
 export interface SubscriptionEntitlementState {
   status: SubscriptionStatus;
   tierId?: TierId;
+  tierIds?: TierId[];
   entitlementKeys?: EntitlementKey[];
   cancelAtPeriodEnd?: boolean;
   currentPeriodEnd?: DateLike | null;
   trialEnd?: DateLike | null;
   accessEndsAt?: DateLike | null;
   statusChangedAt?: DateLike | null;
+  scheduledTierChange?: SubscriptionTierChange | null;
+}
+
+export type SubscriptionTierChangeAccessPolicy = "immediate" | "period_end";
+
+export interface SubscriptionTierChange {
+  fromTierId?: TierId;
+  toTierId: TierId;
+  effectiveAt: DateLike;
+  accessPolicy: SubscriptionTierChangeAccessPolicy;
 }
 
 export interface StripeLikeSubscriptionState extends Omit<SubscriptionEntitlementState, "status"> {
@@ -63,8 +74,7 @@ export function decideSubscriptionEntitlement(
     });
   }
 
-  const entitlementKeys = subscription.entitlementKeys ?? [];
-  const tierId = subscription.tierId;
+  const { entitlementKeys, tierId, tierIds } = getEntitlementContext(subscription, checkedAt);
 
   switch (subscription.status) {
     case "active":
@@ -76,6 +86,7 @@ export function decideSubscriptionEntitlement(
         checkedAt,
         accessEndsAt: toDate(subscription.accessEndsAt) ?? toDate(subscription.currentPeriodEnd),
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "trialing":
@@ -85,6 +96,7 @@ export function decideSubscriptionEntitlement(
         checkedAt,
         accessEndsAt: toDate(subscription.accessEndsAt) ?? toDate(subscription.trialEnd),
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "past_due":
@@ -99,6 +111,7 @@ export function decideSubscriptionEntitlement(
         accessEndsAt: gracePeriodEndsAt,
         gracePeriodEndsAt,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     }
@@ -111,6 +124,7 @@ export function decideSubscriptionEntitlement(
         accessEndsAt: toDate(subscription.accessEndsAt) ?? toDate(subscription.currentPeriodEnd),
         gracePeriodEndsAt: null,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "unpaid":
@@ -122,6 +136,7 @@ export function decideSubscriptionEntitlement(
         accessEndsAt: toDate(subscription.accessEndsAt) ?? toDate(subscription.currentPeriodEnd),
         gracePeriodEndsAt: null,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "comped":
@@ -132,6 +147,7 @@ export function decideSubscriptionEntitlement(
         accessEndsAt: toDate(subscription.accessEndsAt),
         gracePeriodEndsAt: null,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "free":
@@ -140,6 +156,7 @@ export function decideSubscriptionEntitlement(
         status: subscription.status,
         checkedAt,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "incomplete":
@@ -149,6 +166,7 @@ export function decideSubscriptionEntitlement(
         status: subscription.status,
         checkedAt,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "paused":
@@ -157,6 +175,7 @@ export function decideSubscriptionEntitlement(
         status: subscription.status,
         checkedAt,
         tierId,
+        tierIds,
         entitlementKeys,
       });
     case "expired":
@@ -166,9 +185,50 @@ export function decideSubscriptionEntitlement(
         checkedAt,
         accessEndsAt: toDate(subscription.accessEndsAt) ?? toDate(subscription.currentPeriodEnd),
         tierId,
+        tierIds,
         entitlementKeys,
       });
+    }
   }
+
+function getEntitlementContext(subscription: SubscriptionEntitlementState, checkedAt: Date) {
+  const baseTierIds = uniqueValues([
+    subscription.tierId,
+    ...(subscription.tierIds ?? []),
+    ...(subscription.entitlementKeys ?? [])
+      .filter((key) => key.startsWith("tier:"))
+      .map((key) => key.slice("tier:".length)),
+  ]);
+  const scheduledTierId = getActiveScheduledTierId(subscription.scheduledTierChange, checkedAt);
+  const tierIds = scheduledTierId ? uniqueValues([...baseTierIds, scheduledTierId]) : baseTierIds;
+  const tierId = scheduledTierId ?? subscription.tierId ?? tierIds[0];
+  const entitlementKeys = uniqueValues([
+    ...(subscription.entitlementKeys ?? []),
+    ...tierIds.map((id) => `tier:${id}` as EntitlementKey),
+  ]);
+
+  return {
+    tierId,
+    tierIds,
+    entitlementKeys,
+  };
+}
+
+function getActiveScheduledTierId(
+  scheduledTierChange: SubscriptionTierChange | null | undefined,
+  checkedAt: Date,
+) {
+  if (!scheduledTierChange) {
+    return undefined;
+  }
+
+  const effectiveAt = toDate(scheduledTierChange.effectiveAt);
+
+  if (!effectiveAt || isAfter(effectiveAt, checkedAt)) {
+    return undefined;
+  }
+
+  return scheduledTierChange.toTierId;
 }
 
 export function getPastDueGracePeriodEnd(
@@ -199,6 +259,7 @@ function decisionForOpenAccess(input: {
   checkedAt: Date;
   accessEndsAt: Date | null;
   tierId?: TierId;
+  tierIds: TierId[];
   entitlementKeys: EntitlementKey[];
 }) {
   if (input.accessEndsAt && isAfter(input.checkedAt, input.accessEndsAt)) {
@@ -208,6 +269,7 @@ function decisionForOpenAccess(input: {
       checkedAt: input.checkedAt,
       accessEndsAt: input.accessEndsAt,
       tierId: input.tierId,
+      tierIds: input.tierIds,
       entitlementKeys: input.entitlementKeys,
     });
   }
@@ -219,6 +281,7 @@ function decisionForOpenAccess(input: {
     accessEndsAt: input.accessEndsAt,
     gracePeriodEndsAt: null,
     tierId: input.tierId,
+    tierIds: input.tierIds,
     entitlementKeys: input.entitlementKeys,
   });
 }
@@ -231,6 +294,7 @@ function decisionForBoundedAccess(input: {
   accessEndsAt: Date | null;
   gracePeriodEndsAt: Date | null;
   tierId?: TierId;
+  tierIds: TierId[];
   entitlementKeys: EntitlementKey[];
 }) {
   if (!input.accessEndsAt || isAfter(input.checkedAt, input.accessEndsAt)) {
@@ -241,6 +305,7 @@ function decisionForBoundedAccess(input: {
       accessEndsAt: input.accessEndsAt,
       gracePeriodEndsAt: input.gracePeriodEndsAt,
       tierId: input.tierId,
+      tierIds: input.tierIds,
       entitlementKeys: input.entitlementKeys,
     });
   }
@@ -252,6 +317,7 @@ function decisionForBoundedAccess(input: {
     accessEndsAt: input.accessEndsAt,
     gracePeriodEndsAt: input.gracePeriodEndsAt,
     tierId: input.tierId,
+    tierIds: input.tierIds,
     entitlementKeys: input.entitlementKeys,
   });
 }
@@ -263,6 +329,7 @@ function allow(input: {
   accessEndsAt: Date | null;
   gracePeriodEndsAt: Date | null;
   tierId?: TierId;
+  tierIds: TierId[];
   entitlementKeys: EntitlementKey[];
 }): EntitlementDecision {
   return {
@@ -273,6 +340,7 @@ function allow(input: {
     accessEndsAt: input.accessEndsAt,
     gracePeriodEndsAt: input.gracePeriodEndsAt,
     tierId: input.tierId,
+    tierIds: input.tierIds,
     entitlementKeys: input.entitlementKeys,
   };
 }
@@ -284,6 +352,7 @@ function deny(input: {
   accessEndsAt?: Date | null;
   gracePeriodEndsAt?: Date | null;
   tierId?: TierId;
+  tierIds?: TierId[];
   entitlementKeys?: EntitlementKey[];
 }): EntitlementDecision {
   return {
@@ -294,6 +363,7 @@ function deny(input: {
     accessEndsAt: input.accessEndsAt ?? null,
     gracePeriodEndsAt: input.gracePeriodEndsAt ?? null,
     tierId: input.tierId,
+    tierIds: input.tierIds ?? [],
     entitlementKeys: input.entitlementKeys ?? [],
   };
 }
@@ -304,6 +374,10 @@ function addDays(date: Date, days: number) {
 
 function isAfter(left: Date, right: Date) {
   return left.getTime() > right.getTime();
+}
+
+function uniqueValues<T>(values: readonly (T | undefined)[]) {
+  return Array.from(new Set(values.filter((value): value is T => value !== undefined)));
 }
 
 function toDate(value: DateLike | null | undefined) {

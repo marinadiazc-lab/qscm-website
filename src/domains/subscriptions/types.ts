@@ -71,5 +71,6 @@ export interface EntitlementDecision {
   accessEndsAt: Date | null;
   gracePeriodEndsAt: Date | null;
   tierId?: TierId;
+  tierIds: TierId[];
   entitlementKeys: EntitlementKey[];
 }

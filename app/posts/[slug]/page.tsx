@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { draftMode } from "next/headers";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { mdxComponents } from "@/src/components/mdx-components";
 import { PostEngagement } from "@/src/components/post-engagement";
 import { getAllPostSlugs, getPostBySlug } from "@/src/content/posts";
+import {
+  evaluatePostAccess,
+  getAccessiblePostBody,
+  getPostAccessViewerForRequest,
+  type PostAccessDecision,
+} from "@/src/domains/content";
 
 type PostPageProps = {
   params: Promise<{
@@ -52,6 +59,22 @@ export default async function PostPage({ params }: PostPageProps) {
     notFound();
   }
 
+  const viewer = await getPostAccessViewerForRequest();
+  const accessDecision =
+    preview && post.publicationState !== "published"
+      ? {
+          allowed: true,
+          reason: "public",
+          requirement: post.accessRequirement,
+          checkedAt: new Date(),
+          lock: null,
+        } satisfies PostAccessDecision
+      : evaluatePostAccess({
+          requirement: post.accessRequirement,
+          viewer,
+        });
+  const accessibleBody = getAccessiblePostBody(post.body, accessDecision);
+
   return (
     <main className="page article">
       <article>
@@ -83,17 +106,42 @@ export default async function PostPage({ params }: PostPageProps) {
             as the final editorial preview system.
           </aside>
         ) : null}
-        {post.visibility !== "public" ? (
-          <aside className="access-note">
-            Access checks will attach here when auth and subscriptions are
-            implemented.
-          </aside>
-        ) : null}
-        <div className="article-content">
-          <MDXRemote source={post.body} components={mdxComponents} />
-        </div>
-        <PostEngagement post={post} />
+        {accessibleBody !== null ? (
+          <>
+            <div className="article-content">
+              <MDXRemote source={accessibleBody} components={mdxComponents} />
+            </div>
+            <PostEngagement post={post} />
+          </>
+        ) : (
+          <LockedPostContent decision={accessDecision} />
+        )}
       </article>
     </main>
+  );
+}
+
+function LockedPostContent({ decision }: { decision: PostAccessDecision }) {
+  if (!decision.lock) {
+    return null;
+  }
+
+  const href = decision.lock.primaryAction === "login" ? "/subscribe" : "/subscribe";
+  const actionLabel =
+    decision.lock.primaryAction === "login"
+      ? "Sign in"
+      : decision.lock.primaryAction === "upgrade"
+        ? "View tiers"
+        : "Subscribe";
+
+  return (
+    <aside className="locked-content" aria-label="Locked content">
+      <p className="badge">{decision.requirement.visibility}</p>
+      <h2>{decision.lock.title}</h2>
+      <p>{decision.lock.message}</p>
+      <Link className="button" href={href}>
+        {actionLabel}
+      </Link>
+    </aside>
   );
 }
