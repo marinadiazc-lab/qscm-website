@@ -17,6 +17,15 @@ This project uses Vitest for fast TypeScript tests around the domain modules and
 - Comments and email behavior, including comment validation, public/privacy-safe comment projections, moderation queues, contact upserts, and send dedupe.
 - Public/private post content metadata used by the route layer.
 
+## Coverage Added In Wave 2
+
+- Post access evaluation for public, free-subscriber, paid-any, and
+  tier-specific visibility.
+- Anonymous versus authenticated route-body behavior, including restricted body
+  filtering before MDX rendering.
+- Grace-period, canceled-through-period, expired, comped, and local tier
+  transition behavior for paid access.
+
 ## CI Gate
 
 Pull requests run lint, typecheck, tests, and build in GitHub Actions. The existing Vercel production deploy workflow also verifies the same checks before deploying from `main`.

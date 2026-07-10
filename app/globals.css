@@ -190,6 +190,25 @@ a {
   background: #ffffff;
 }
 
+.locked-content {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+  border: 1px solid #deded8;
+  border-radius: 6px;
+  padding: 22px;
+  background: #ffffff;
+}
+
+.locked-content h2,
+.locked-content p {
+  margin: 0;
+}
+
+.locked-content .button {
+  width: fit-content;
+}
+
 .wire-panel {
   display: grid;
   gap: 16px;

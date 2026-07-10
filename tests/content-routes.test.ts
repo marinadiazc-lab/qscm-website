@@ -5,6 +5,7 @@ import {
   getPostBySlug,
   getPostMetadataIndex,
 } from "../src/content/posts";
+import { evaluatePostAccess, getAccessiblePostBody } from "../src/domains/content";
 
 const publishedSlugs = ["welcome", "paid-foundation", "free-subscriber-note"];
 
@@ -73,5 +74,48 @@ describe("post content routing data", () => {
 
   it("returns undefined for unknown content paths", () => {
     expect(getPostBySlug("missing")).toBeUndefined();
+  });
+
+  it("keeps restricted post body content out of anonymous route rendering", () => {
+    const paidPost = getPostBySlug("paid-foundation");
+
+    expect(paidPost).toBeDefined();
+
+    const decision = evaluatePostAccess({
+      requirement: paidPost!.accessRequirement,
+      viewer: { kind: "anonymous" },
+      now: new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      reason: "authentication_required",
+    });
+    expect(getAccessiblePostBody(paidPost!.body, decision)).toBeNull();
+  });
+
+  it("keeps authorized paid route rendering on the full post body", () => {
+    const paidPost = getPostBySlug("paid-foundation");
+
+    expect(paidPost).toBeDefined();
+
+    const decision = evaluatePostAccess({
+      requirement: paidPost!.accessRequirement,
+      viewer: {
+        kind: "authenticated",
+        subscription: {
+          status: "active",
+          tierId: "founding",
+          currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        },
+      },
+      now: new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      allowed: true,
+      reason: "paid_subscription",
+    });
+    expect(getAccessiblePostBody(paidPost!.body, decision)).toBe(paidPost!.body);
   });
 });

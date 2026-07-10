@@ -72,6 +72,11 @@ must use lowercase letters, numbers, and hyphens.
 | `paid_any` | Any paid subscription is required. |
 | `specific_tiers` | A paid subscription in one of the listed `tierIds` is required. |
 
+Post access is decided on the server before rendering the MDX body. When a
+reader is not allowed to read a restricted post, the route renders a locked
+state from the title, excerpt, and access rule only; the restricted body is not
+passed to MDX rendering.
+
 Example tier-restricted frontmatter:
 
 ```mdx

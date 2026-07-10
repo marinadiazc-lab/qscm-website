@@ -7,6 +7,7 @@ import {
 import {
   derivePostAccessRequirement,
   derivePostAccessRequirementFromVisibility,
+  evaluatePostAccess,
 } from "../src/domains/content";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -28,7 +29,8 @@ describe("subscription entitlement decisions", () => {
       reason: "active_subscription",
       status: "active",
       tierId: "founding",
-      entitlementKeys: ["paid_content", "private_podcast"],
+      tierIds: ["founding"],
+      entitlementKeys: ["paid_content", "private_podcast", "tier:founding"],
     });
     expect(decision.accessEndsAt?.toISOString()).toBe("2026-08-10T00:00:00.000Z");
   });
@@ -106,7 +108,7 @@ describe("subscription entitlement decisions", () => {
         {
           status: "comped",
           tierId: "supporter",
-          entitlementKeys: ["paid_content"],
+          entitlementKeys: ["paid_content", "tier:supporter"],
         },
         { now },
       ),
@@ -115,6 +117,25 @@ describe("subscription entitlement decisions", () => {
       reason: "complimentary_access",
       status: "comped",
       tierId: "supporter",
+      tierIds: ["supporter"],
+    });
+
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "comped",
+          tierId: "supporter",
+          entitlementKeys: ["paid_content", "tier:supporter"],
+          accessEndsAt: "2026-07-09T00:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "access_period_ended",
+      status: "comped",
+      tierId: "supporter",
+      tierIds: ["supporter"],
     });
   });
 
@@ -164,7 +185,7 @@ describe("subscription entitlement decisions", () => {
       reason: "past_due_grace_period",
       status: "past_due",
       tierId: "founding",
-      entitlementKeys: ["paid_content", "private_podcast"],
+      entitlementKeys: ["paid_content", "private_podcast", "tier:founding"],
     });
     expect(decision.gracePeriodEndsAt?.toISOString()).toBe("2026-07-16T12:00:00.000Z");
   });
@@ -249,6 +270,89 @@ describe("subscription entitlement decisions", () => {
       )?.toISOString(),
     ).toBe("2026-07-20T00:00:00.000Z");
   });
+
+  it("represents tier transitions locally for access checks", () => {
+    const futureUpgrade = decideSubscriptionEntitlement(
+      {
+        status: "active",
+        tierId: "basic",
+        currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        scheduledTierChange: {
+          fromTierId: "basic",
+          toTierId: "pro",
+          effectiveAt: "2026-07-11T00:00:00.000Z",
+          accessPolicy: "immediate",
+        },
+      },
+      { now },
+    );
+    const activeUpgrade = decideSubscriptionEntitlement(
+      {
+        status: "active",
+        tierId: "basic",
+        currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        scheduledTierChange: {
+          fromTierId: "basic",
+          toTierId: "pro",
+          effectiveAt: "2026-07-10T00:00:00.000Z",
+          accessPolicy: "immediate",
+        },
+      },
+      { now },
+    );
+    const futurePeriodEndDowngrade = decideSubscriptionEntitlement(
+      {
+        status: "active",
+        tierId: "pro",
+        entitlementKeys: ["paid_content", "tier:pro"],
+        currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        scheduledTierChange: {
+          fromTierId: "pro",
+          toTierId: "basic",
+          effectiveAt: "2026-08-10T00:00:00.000Z",
+          accessPolicy: "period_end",
+        },
+      },
+      { now },
+    );
+    const activePeriodEndDowngrade = decideSubscriptionEntitlement(
+      {
+        status: "active",
+        tierId: "pro",
+        currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        scheduledTierChange: {
+          fromTierId: "pro",
+          toTierId: "basic",
+          effectiveAt: "2026-07-10T00:00:00.000Z",
+          accessPolicy: "period_end",
+        },
+      },
+      { now },
+    );
+
+    expect(futureUpgrade).toMatchObject({
+      allowed: true,
+      tierId: "basic",
+      tierIds: ["basic"],
+    });
+    expect(activeUpgrade).toMatchObject({
+      allowed: true,
+      tierId: "pro",
+      tierIds: ["basic", "pro"],
+    });
+    expect(futurePeriodEndDowngrade).toMatchObject({
+      allowed: true,
+      tierId: "pro",
+      tierIds: ["pro"],
+    });
+    expect(activePeriodEndDowngrade).toMatchObject({
+      allowed: true,
+      tierId: "basic",
+      tierIds: ["basic"],
+    });
+    expect(activePeriodEndDowngrade.entitlementKeys).toContain("tier:basic");
+    expect(activePeriodEndDowngrade.entitlementKeys).not.toContain("tier:pro");
+  });
 });
 
 describe("content access requirements", () => {
@@ -275,6 +379,203 @@ describe("content access requirements", () => {
       requiresAuthentication: true,
       requiresPaidSubscription: true,
       allowedTierIds: ["a", "b"],
+    });
+  });
+
+  it("allows public posts without a viewer and locks free subscriber posts for anonymous readers", () => {
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("public"),
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "public",
+      lock: null,
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("free_subscribers"),
+        viewer: { kind: "anonymous" },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "authentication_required",
+      lock: {
+        primaryAction: "login",
+      },
+    });
+  });
+
+  it("allows authenticated free subscribers but blocks authenticated readers without subscription state", () => {
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("free_subscribers"),
+        viewer: { kind: "authenticated", isFreeSubscriber: true },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "authenticated_free_subscriber",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("free_subscribers"),
+        viewer: { kind: "authenticated" },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
+      lock: {
+        primaryAction: "subscribe",
+      },
+    });
+  });
+
+  it("enforces paid and tier-specific post rules from local subscription entitlements", () => {
+    const paidRequirement = derivePostAccessRequirementFromVisibility("paid_any");
+    const proRequirement = derivePostAccessRequirement({
+      visibility: "specific_tiers",
+      tierIds: ["pro", "founding"],
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "active",
+            tierId: "basic",
+            currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "paid_subscription",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: proRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "active",
+            tierId: "basic",
+            currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "tier_required",
+      lock: {
+        primaryAction: "upgrade",
+      },
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: proRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "comped",
+            tierId: "pro",
+            entitlementKeys: ["paid_content", "tier:pro"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "specific_tier",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: proRequirement,
+        viewer: {
+          kind: "authenticated",
+          entitlement: {
+            allowed: true,
+            reason: "active_subscription",
+            status: "active",
+            checkedAt: now,
+            accessEndsAt: null,
+            gracePeriodEndsAt: null,
+            tierIds: ["pro"],
+            entitlementKeys: ["paid_content"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "specific_tier",
+    });
+  });
+
+  it("uses grace, canceled-through-period, and expired entitlement decisions for paid posts", () => {
+    const paidRequirement = derivePostAccessRequirementFromVisibility("paid_any");
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "past_due",
+            currentPeriodEnd: "2026-07-09T12:00:00.000Z",
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "paid_subscription",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "canceled",
+            currentPeriodEnd: "2026-07-11T12:00:00.000Z",
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "paid_subscription",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "expired",
+            currentPeriodEnd: "2026-07-09T12:00:00.000Z",
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
     });
   });
 });
