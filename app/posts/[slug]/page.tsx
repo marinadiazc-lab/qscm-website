@@ -126,7 +126,7 @@ function LockedPostContent({ decision }: { decision: PostAccessDecision }) {
     return null;
   }
 
-  const href = decision.lock.primaryAction === "login" ? "/subscribe" : "/subscribe";
+  const href = decision.lock.primaryAction === "login" ? "/login" : "/subscribe";
   const actionLabel =
     decision.lock.primaryAction === "login"
       ? "Sign in"

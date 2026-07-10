@@ -140,12 +140,11 @@ export function decideSubscriptionEntitlement(
         entitlementKeys,
       });
     case "comped":
-      return allow({
+      return decisionForOpenAccess({
         reason: "complimentary_access",
         status: subscription.status,
         checkedAt,
         accessEndsAt: toDate(subscription.accessEndsAt),
-        gracePeriodEndsAt: null,
         tierId,
         tierIds,
         entitlementKeys,
@@ -199,13 +198,19 @@ function getEntitlementContext(subscription: SubscriptionEntitlementState, check
       .filter((key) => key.startsWith("tier:"))
       .map((key) => key.slice("tier:".length)),
   ]);
-  const scheduledTierId = getActiveScheduledTierId(subscription.scheduledTierChange, checkedAt);
-  const tierIds = scheduledTierId ? uniqueValues([...baseTierIds, scheduledTierId]) : baseTierIds;
-  const tierId = scheduledTierId ?? subscription.tierId ?? tierIds[0];
-  const entitlementKeys = uniqueValues([
-    ...(subscription.entitlementKeys ?? []),
-    ...tierIds.map((id) => `tier:${id}` as EntitlementKey),
-  ]);
+  const activeTierChange = getActiveScheduledTierChange(
+    subscription.scheduledTierChange,
+    checkedAt,
+  );
+  const tierIds = activeTierChange
+    ? applyActiveTierChange(baseTierIds, activeTierChange)
+    : baseTierIds;
+  const tierId = activeTierChange?.toTierId ?? subscription.tierId ?? tierIds[0];
+  const entitlementKeys = getEntitlementKeysForTierChange(
+    subscription.entitlementKeys ?? [],
+    tierIds,
+    activeTierChange,
+  );
 
   return {
     tierId,
@@ -214,7 +219,7 @@ function getEntitlementContext(subscription: SubscriptionEntitlementState, check
   };
 }
 
-function getActiveScheduledTierId(
+function getActiveScheduledTierChange(
   scheduledTierChange: SubscriptionTierChange | null | undefined,
   checkedAt: Date,
 ) {
@@ -228,7 +233,37 @@ function getActiveScheduledTierId(
     return undefined;
   }
 
-  return scheduledTierChange.toTierId;
+  return scheduledTierChange;
+}
+
+function applyActiveTierChange(
+  baseTierIds: readonly TierId[],
+  scheduledTierChange: SubscriptionTierChange,
+) {
+  if (scheduledTierChange.accessPolicy === "period_end") {
+    return uniqueValues([
+      ...baseTierIds.filter((tierId) => tierId !== scheduledTierChange.fromTierId),
+      scheduledTierChange.toTierId,
+    ]);
+  }
+
+  return uniqueValues([...baseTierIds, scheduledTierChange.toTierId]);
+}
+
+function getEntitlementKeysForTierChange(
+  entitlementKeys: readonly EntitlementKey[],
+  tierIds: readonly TierId[],
+  scheduledTierChange: SubscriptionTierChange | undefined,
+) {
+  const activeEntitlementKeys =
+    scheduledTierChange?.accessPolicy === "period_end" && scheduledTierChange.fromTierId
+      ? entitlementKeys.filter((key) => key !== `tier:${scheduledTierChange.fromTierId}`)
+      : entitlementKeys;
+
+  return uniqueValues([
+    ...activeEntitlementKeys,
+    ...tierIds.map((id) => `tier:${id}` as EntitlementKey),
+  ]);
 }
 
 export function getPastDueGracePeriodEnd(

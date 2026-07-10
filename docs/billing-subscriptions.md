@@ -46,7 +46,9 @@ Access behavior covered by the local evaluator:
 
 Tier-specific posts check both active tier ids and `tier:<id>` entitlement keys.
 Scheduled tier changes can be represented locally with `scheduledTierChange`.
-Before the effective time, access remains on the current tier. Once the local
-effective time is reached, the target tier is included in the active tier set.
+Before the effective time, access remains on the current tier. Immediate changes
+add the target tier once effective. Period-end changes replace the prior tier
+with the target tier once effective, so a completed downgrade no longer grants
+the old higher tier.
 Provider-owned checkout, portal, proration, and webhook reconciliation flows are
 still responsible for writing those local states.

@@ -119,6 +119,24 @@ describe("subscription entitlement decisions", () => {
       tierId: "supporter",
       tierIds: ["supporter"],
     });
+
+    expect(
+      decideSubscriptionEntitlement(
+        {
+          status: "comped",
+          tierId: "supporter",
+          entitlementKeys: ["paid_content", "tier:supporter"],
+          accessEndsAt: "2026-07-09T00:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "access_period_ended",
+      status: "comped",
+      tierId: "supporter",
+      tierIds: ["supporter"],
+    });
   });
 
   it("allows past-due access only through the grace window", () => {
@@ -282,7 +300,22 @@ describe("subscription entitlement decisions", () => {
       },
       { now },
     );
-    const periodEndDowngrade = decideSubscriptionEntitlement(
+    const futurePeriodEndDowngrade = decideSubscriptionEntitlement(
+      {
+        status: "active",
+        tierId: "pro",
+        entitlementKeys: ["paid_content", "tier:pro"],
+        currentPeriodEnd: "2026-08-10T00:00:00.000Z",
+        scheduledTierChange: {
+          fromTierId: "pro",
+          toTierId: "basic",
+          effectiveAt: "2026-08-10T00:00:00.000Z",
+          accessPolicy: "period_end",
+        },
+      },
+      { now },
+    );
+    const activePeriodEndDowngrade = decideSubscriptionEntitlement(
       {
         status: "active",
         tierId: "pro",
@@ -290,7 +323,7 @@ describe("subscription entitlement decisions", () => {
         scheduledTierChange: {
           fromTierId: "pro",
           toTierId: "basic",
-          effectiveAt: "2026-08-10T00:00:00.000Z",
+          effectiveAt: "2026-07-10T00:00:00.000Z",
           accessPolicy: "period_end",
         },
       },
@@ -307,11 +340,18 @@ describe("subscription entitlement decisions", () => {
       tierId: "pro",
       tierIds: ["basic", "pro"],
     });
-    expect(periodEndDowngrade).toMatchObject({
+    expect(futurePeriodEndDowngrade).toMatchObject({
       allowed: true,
       tierId: "pro",
       tierIds: ["pro"],
     });
+    expect(activePeriodEndDowngrade).toMatchObject({
+      allowed: true,
+      tierId: "basic",
+      tierIds: ["basic"],
+    });
+    expect(activePeriodEndDowngrade.entitlementKeys).toContain("tier:basic");
+    expect(activePeriodEndDowngrade.entitlementKeys).not.toContain("tier:pro");
   });
 });
 
@@ -451,6 +491,29 @@ describe("content access requirements", () => {
             status: "comped",
             tierId: "pro",
             entitlementKeys: ["paid_content", "tier:pro"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "specific_tier",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: proRequirement,
+        viewer: {
+          kind: "authenticated",
+          entitlement: {
+            allowed: true,
+            reason: "active_subscription",
+            status: "active",
+            checkedAt: now,
+            accessEndsAt: null,
+            gracePeriodEndsAt: null,
+            tierIds: ["pro"],
+            entitlementKeys: ["paid_content"],
           },
         },
         now,

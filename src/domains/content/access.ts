@@ -218,6 +218,7 @@ function hasRequiredTier(allowedTierIds: readonly ContentTierId[], entitlement: 
 
   const tierIds = new Set([
     entitlement.tierId,
+    ...entitlement.tierIds,
     ...entitlement.entitlementKeys
       .filter((key) => key.startsWith("tier:"))
       .map((key) => key.slice("tier:".length)),
