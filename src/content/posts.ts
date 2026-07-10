@@ -17,9 +17,9 @@ import {
   type PostVisibility,
   type PublicationId,
 } from "@/src/domains/content";
+import { validateStaticMdxMedia } from "@/src/domains/media/static-content";
 
 const postsDirectory = path.join(process.cwd(), "content", "posts");
-const publicDirectory = path.join(process.cwd(), "public");
 
 export type { PostVisibility };
 
@@ -78,76 +78,12 @@ function formatDate(date: Date) {
   }).format(date);
 }
 
-function isRemoteReference(src: string) {
-  return src.startsWith("http://") || src.startsWith("https://");
-}
-
-function validateLocalMediaReference(src: string, sourcePath: string) {
-  if (isRemoteReference(src)) {
-    return;
-  }
-
-  if (!src.startsWith("/")) {
-    throw new Error(`Invalid media reference in ${sourcePath}: ${src} must start with / or http(s).`);
-  }
-
-  const localPath = path.join(publicDirectory, src);
-
-  if (!localPath.startsWith(publicDirectory) || !fs.existsSync(localPath)) {
-    throw new Error(`Missing media reference in ${sourcePath}: ${src} was not found in public/.`);
-  }
-}
-
-function getMarkdownImageSources(body: string) {
-  return Array.from(body.matchAll(/!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)).map(
-    (match) => match[1],
-  );
-}
-
-const mediaLikePathPattern =
-  /\.(a?ac|avif|csv|docx?|gif|jpe?g|m4a|m4v|mov|mp3|mp4|oga|ogg|pdf|png|pptx?|svg|txt|wav|webm|webp|xlsx?|zip)$/i;
-
-function isLikelyMediaAssetReference(src: string) {
-  const pathWithoutQueryOrHash = src.split(/[?#]/)[0];
-  return pathWithoutQueryOrHash.startsWith("/media/") || mediaLikePathPattern.test(pathWithoutQueryOrHash);
-}
-
-function getQuotedMdxAttributeSources(body: string, tagPattern: string, attribute: string) {
-  const pattern = new RegExp(
-    `<\\s*(?:${tagPattern})\\b[^>]*\\s${attribute}\\s*=\\s*(?:"([^"]+)"|'([^']+)'|\\{\\s*["']([^"']+)["']\\s*\\})`,
-    "gi",
-  );
-
-  return Array.from(body.matchAll(pattern)).map((match) => match[1] ?? match[2] ?? match[3]);
-}
-
-function getMdxMediaSources(body: string) {
-  const requiredMediaReferences = [
-    ...getQuotedMdxAttributeSources(body, "audio|video|source|track|img", "src"),
-    ...getQuotedMdxAttributeSources(body, "video", "poster"),
-  ];
-
-  const optionalMediaReferences = [
-    ...getQuotedMdxAttributeSources(body, "a", "href"),
-    ...getQuotedMdxAttributeSources(body, "embed|iframe", "src"),
-    ...getQuotedMdxAttributeSources(body, "object", "data"),
-  ].filter(isLikelyMediaAssetReference);
-
-  return [...requiredMediaReferences, ...optionalMediaReferences];
-}
-
 function validatePostMedia(post: Post, body: string) {
-  const references = Array.from(new Set([
+  validateStaticMdxMedia([
     post.coverImage?.src,
     post.seo.image,
     ...post.media.map((media) => media.src),
-    ...getMarkdownImageSources(body),
-    ...getMdxMediaSources(body),
-  ].filter((src): src is string => Boolean(src))));
-
-  for (const src of references) {
-    validateLocalMediaReference(src, post.sourcePath);
-  }
+  ], body, post.sourcePath);
 }
 
 function readPost(fileName: string, now = new Date()): Post {

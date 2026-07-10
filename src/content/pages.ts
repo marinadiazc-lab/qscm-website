@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
+import { validateStaticMdxMedia } from "@/src/domains/media/static-content";
 
 const pagesDirectory = path.join(process.cwd(), "content", "pages");
 
@@ -66,6 +67,7 @@ function readPage(fileName: string): StaticPage {
   const file = fs.readFileSync(fullPath, "utf8");
   const parsed = matter(file);
   const frontmatter = parsePageFrontmatter(parsed.data, fullPath);
+  validateStaticMdxMedia([], parsed.content, fullPath);
 
   return {
     slug: frontmatter.slug,

@@ -3,6 +3,7 @@ import {
   canPrivateFeedTokenAccessShow,
 } from "./access";
 import type {
+  PodcastAudioDeliveryMode,
   PodcastEpisode,
   PodcastFeedGenerationInput,
   PodcastFeedGenerationResult,
@@ -10,6 +11,7 @@ import type {
   PodcastRssItem,
   PodcastShow,
 } from "./types";
+import type { MediaAsset } from "../media";
 
 export function buildPodcastRssFeed(
   input: PodcastFeedGenerationInput,
@@ -130,4 +132,57 @@ function getFeedAudioDeliveryMode(episodes: readonly PodcastEpisode[]) {
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
+}
+
+export function mediaAssetToPodcastEnclosure(
+  asset: Pick<
+    MediaAsset,
+    | "kind"
+    | "stablePath"
+    | "publicUrl"
+    | "mimeType"
+    | "byteLength"
+    | "durationSeconds"
+    | "checksumSha256"
+    | "objectKey"
+    | "access"
+  >,
+  options: {
+    baseUrl?: string;
+    deliveryMode?: PodcastAudioDeliveryMode;
+  } = {},
+) {
+  if (asset.kind !== "audio") {
+    throw new Error("Podcast enclosures require an audio media asset.");
+  }
+
+  if (!asset.mimeType) {
+    throw new Error("Podcast enclosures require a MIME type.");
+  }
+
+  const deliveryMode =
+    options.deliveryMode ??
+    (asset.access === "public" ? "stable_cdn_obscure_url" : "strict_signed_audio_url");
+
+  return {
+    url: absoluteUrl(asset.publicUrl ?? asset.stablePath, options.baseUrl),
+    mimeType: asset.mimeType,
+    byteLength: asset.byteLength,
+    durationSeconds: asset.durationSeconds,
+    deliveryMode,
+    cdnObjectKey: asset.objectKey,
+    checksumSha256: asset.checksumSha256,
+  };
+}
+
+function absoluteUrl(value: string, baseUrl?: string) {
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+
+  if (!baseUrl) {
+    return value;
+  }
+
+  return new URL(value, baseUrl).toString();
 }

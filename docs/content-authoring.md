@@ -153,8 +153,16 @@ Supported patterns:
 
 Local references in `coverImage`, `seo.image`, `media`, Markdown images, MDX
 `audio`/`video`/`source`/`track`/`img` tags, video posters, media-like download
-links, and local `embed`/`iframe`/`object` references are checked during the
-build. Missing files fail clearly instead of silently publishing broken media.
+links, static page media, and local `embed`/`iframe`/`object` references are
+checked during the build. Missing files fail clearly instead of silently
+publishing broken media. Private `media-private://` assets are blocked from
+public MDX.
+
+Links to downloadable files such as PDF, ZIP, CSV, DOCX, PPTX, and XLSX render
+as stable download links.
+
+See `docs/media-storage.md` for upload registration, private media, CDN, and
+retention policy details.
 
 ## Static Inner Pages
 

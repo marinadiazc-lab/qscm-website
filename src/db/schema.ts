@@ -179,6 +179,11 @@ export const mediaAssetStatusEnum = pgEnum("media_asset_status", [
   "failed",
   "archived",
 ]);
+export const mediaAssetAccessEnum = pgEnum("media_asset_access", [
+  "public",
+  "admin",
+  "entitled",
+]);
 export const webhookLogStateEnum = pgEnum("webhook_log_state", [
   "received",
   "processing",
@@ -865,12 +870,22 @@ export const mediaAssets = pgTable(
     status: mediaAssetStatusEnum("status").notNull().default("pending"),
     provider: text("provider").notNull(),
     objectKey: text("object_key").notNull(),
+    stablePath: text("stable_path").notNull(),
     publicUrl: text("public_url"),
+    access: mediaAssetAccessEnum("access").notNull().default("public"),
+    originalFileName: text("original_file_name"),
+    title: text("title"),
+    altText: text("alt_text"),
     mimeType: text("mime_type"),
     byteLength: bigint("byte_length", { mode: "number" }),
     checksumSha256: text("checksum_sha256"),
+    width: integer("width"),
+    height: integer("height"),
     durationSeconds: integer("duration_seconds"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    lastReferencedAt: timestamp("last_referenced_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -878,6 +893,12 @@ export const mediaAssets = pgTable(
     providerObjectUnique: uniqueIndex("media_assets_provider_object_unique").on(
       table.provider,
       table.objectKey,
+    ),
+    stablePathUnique: uniqueIndex("media_assets_stable_path_unique").on(table.stablePath),
+    publicationAccessIdx: index("media_assets_publication_access_idx").on(
+      table.publicationId,
+      table.access,
+      table.status,
     ),
   }),
 );
