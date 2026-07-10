@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "lint": "eslint . --config tests/eslint.config.mjs",
+    "typecheck": "next typegen && tsc --noEmit --ignoreDeprecations 6.0",
+    "test": "vitest run --config tests/vitest.config.mjs",
     "start": "next start",
     "deploy": "vercel --prod",
     "vercel:dev": "vercel dev"
@@ -24,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
   }
 }
