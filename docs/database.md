@@ -68,7 +68,8 @@ grants that user the `admin` role, and upserts the `supporter` and
 The initial schema includes:
 
 - identity: users, roles, OAuth/email accounts, sessions, magic links, account-linking records
-- subscribers: subscriber lifecycle status, preferences, email provider sync state
+- subscribers: subscriber lifecycle status, preferences, email provider sync state,
+  send intents, broadcasts, provider events, and delivery logs
 - subscriptions: tiers, prices, Stripe/free/gift/admin-comped subscriptions, entitlement grants
 - content overlays: publication records, MDX metadata, source path/hash, access rules, overlays
 - engagement: private comment fields, moderation audit entries, persisted likes, share events, anonymous actor hashes

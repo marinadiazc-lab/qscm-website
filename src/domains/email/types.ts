@@ -214,6 +214,34 @@ export type EmailSendIntent = {
   sentAt?: Date;
 };
 
+export type CreateEmailSendIntentInput = {
+  publicationId: EmailPublicationId;
+  kind: EmailSendKind;
+  dedupeKey: EmailDedupeKey;
+  recipientEmail?: EmailAddress;
+  subscriberId?: EmailSubscriberId;
+  broadcastId?: EmailBroadcastId;
+  metadata?: EmailMetadata;
+};
+
+export type EmailSendLogLevel = "info" | "warning" | "error";
+
+export type EmailDeliveryLog = {
+  id: string;
+  publicationId?: EmailPublicationId;
+  intentId?: EmailSendIntentId;
+  broadcastId?: EmailBroadcastId;
+  subscriberId?: EmailSubscriberId;
+  recipientEmail?: EmailAddress;
+  provider?: EmailProviderKey;
+  providerMessageId?: EmailProviderMessageId;
+  eventType: string;
+  level: EmailSendLogLevel;
+  message?: string;
+  metadata?: EmailMetadata;
+  createdAt: Date;
+};
+
 export type TransactionalEmailPurpose =
   | "magic_link"
   | "receipt"
@@ -277,6 +305,31 @@ export type EmailBroadcast = {
   metadata?: EmailMetadata;
   createdAt: Date;
   updatedAt: Date;
+};
+
+export type EmailProviderEventType =
+  | "email.sent"
+  | "email.delivered"
+  | "email.delivery_delayed"
+  | "email.failed"
+  | "email.bounced"
+  | "email.complained"
+  | "email.suppressed"
+  | "email.opened"
+  | "email.clicked"
+  | "contact.unsubscribed"
+  | (string & {});
+
+export type EmailProviderEvent = {
+  id: string;
+  provider: EmailProviderKey;
+  type: EmailProviderEventType;
+  createdAt: Date;
+  providerMessageId?: EmailProviderMessageId;
+  recipientEmail?: EmailAddress;
+  broadcastId?: EmailBroadcastId;
+  subscriberId?: EmailSubscriberId;
+  payload: Record<string, unknown>;
 };
 
 export type SendEmailBroadcastInput = {

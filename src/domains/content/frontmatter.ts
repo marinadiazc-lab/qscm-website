@@ -30,6 +30,15 @@ export const contentSeoSchema = z.object({
   image: localOrRemoteReferenceSchema.optional(),
 });
 
+export const postNewsletterSchema = z.object({
+  enabled: z.boolean().default(false),
+  subject: z.string().min(1).max(120).optional(),
+  previewText: z.string().min(1).max(180).optional(),
+  audience: z
+    .enum(["public", "free_subscribers", "paid_any", "specific_tiers"])
+    .optional(),
+});
+
 export const contentMediaReferenceSchema = z
   .object({
     src: localOrRemoteReferenceSchema,
@@ -63,6 +72,7 @@ export const postFrontmatterSchema = z
     canonicalUrl: z.string().url().optional(),
     coverImage: contentImageSchema.optional(),
     seo: contentSeoSchema.default(() => ({})),
+    newsletter: postNewsletterSchema.optional(),
     media: z.array(contentMediaReferenceSchema).default(() => []),
   })
   .superRefine((frontmatter, ctx) => {

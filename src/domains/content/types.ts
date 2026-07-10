@@ -44,7 +44,15 @@ export interface PostFrontmatter {
   canonicalUrl?: string;
   coverImage?: ContentImage;
   seo?: ContentSeo;
+  newsletter?: PostNewsletterOptions;
   media: ContentMediaReference[];
+}
+
+export interface PostNewsletterOptions {
+  enabled: boolean;
+  subject?: string;
+  previewText?: string;
+  audience?: "public" | "free_subscribers" | "paid_any" | "specific_tiers";
 }
 
 export type ContentMediaKind = "image" | "audio" | "video" | "download" | "embed";
@@ -101,6 +109,7 @@ export interface PostMetadataIndexEntry {
   canonicalUrl?: string;
   coverImage?: ContentImage;
   seo?: ContentSeo;
+  newsletter?: PostNewsletterOptions;
   media: ContentMediaReference[];
 }
 
