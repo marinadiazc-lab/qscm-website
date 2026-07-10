@@ -1,11 +1,39 @@
 # Auth and Accounts
 
-Status: first domain skeleton
-Date: 2026-07-09
+Status: server auth foundation
+Date: 2026-07-10
 
-The auth domain defines the early account model for readers, authors, and admins. It does not include Next.js routes or provider SDK code yet; those can wire into the exported types, pure service decisions, and in-memory repository when UI work begins.
+The auth domain defines the account model, conservative provider-linking decisions, magic-link request lifecycle, durable sessions, and launch role checks. The app routes under `/login`, `/account`, and `/api/auth/*` use this domain directly on the server.
 
-Launch admin/dashboard work should expand the role model to match the M01 product policy: `reader`, `author`, `editor`, `moderator`, `support`, and `admin`. Subscriber access is handled through subscription/entitlement state attached to a reader account, not by assigning a separate staff role.
+Launch roles are `reader`, `author`, `editor`, `moderator`, `support`, and `admin`. Subscriber access is handled through subscription/entitlement state attached to a reader account, not by assigning a separate staff role.
+
+## Auth foundation decision
+
+M04 uses a first-party Next.js server-cookie foundation instead of adding Auth.js or Better Auth in this PR.
+
+Rationale:
+
+- The M01 database already owns users, roles, provider accounts, sessions, magic-link requests, and account-linking audit records.
+- The product policy needs conservative account linking; email-match-only merges must not happen silently.
+- Provider credentials are not available in the repo, so OAuth routes need safe disabled behavior before a complete callback exchange can be verified.
+- Keeping this layer small avoids reshaping existing schema around a library adapter before the app has credentialed OAuth and email delivery environments.
+
+The implementation still follows the same integration boundary an auth library would need: provider config, durable sessions, HTTP-only cookies, server-only current-user lookup, explicit linking decisions, and route guards. If the app later adopts Auth.js or Better Auth, the existing domain decisions and tables should remain the source of truth.
+
+## Environment variables
+
+Database-backed auth routes require `DATABASE_URL`.
+
+OAuth providers are disabled unless both credentials for that provider are present:
+
+- `AUTH_GOOGLE_CLIENT_ID`
+- `AUTH_GOOGLE_CLIENT_SECRET`
+- `AUTH_FACEBOOK_CLIENT_ID`
+- `AUTH_FACEBOOK_CLIENT_SECRET`
+- `AUTH_APPLE_CLIENT_ID`
+- `AUTH_APPLE_CLIENT_SECRET`
+
+Disabled providers appear as unavailable on `/login` and redirect back with a usable error from `/api/auth/oauth/[provider]`.
 
 ## OAuth linking
 
@@ -21,21 +49,29 @@ Provider account linking is conservative by default:
 
 This lets account settings flows be explicit while preventing unsafe background merges during sign-in.
 
+Signed-in users can start explicit provider linking from `/account` by choosing to link another provider. The OAuth callback exchange is intentionally not completed without live app credentials; when that callback is added, it should call `decideOAuthAccountLink` with the signed-in target user and persist the resulting decision before creating or linking accounts.
+
+Manual/admin account merges should remain a documented support operation: inspect both users, verify ownership out of band, migrate entitlements/feed tokens/comments intentionally, then unlink or disable the duplicate provider account. Do not merge only because two providers return the same email address.
+
 ## Magic-link email
 
 Magic-link requests have a lifecycle status of `requested`, `consumed`, `expired`, or `revoked`. A request can only be consumed while it is still `requested` and before `expiresAt`.
 
-The stored token should be a hash, not the raw emailed token. Email delivery can use the email domain later, but the auth domain only tracks the request, redirect target, timestamps, and optional session created after consumption.
+The stored token is a SHA-256 hash, not the raw emailed token. `/api/auth/magic-link` creates an expiring request. `/api/auth/magic-link/consume` consumes the token once, creates or finds a reader user, links the `email_magic_link` account, creates a durable session, and sets the HTTP-only `qscm_session` cookie.
 
-## Admin checks
+Real email delivery is deliberately not implemented here. The route returns the same safe response whether delivery is available or not. M06 should connect `deliverMagicLink` to the transactional `EmailProvider`/Resend send-intent flow.
 
-The current skeleton carries role strings: `reader`, `author`, and `admin`. Use `isAdminUser` or `hasAuthRole(user, "admin")` for admin gates while this skeleton is still small.
+## Route guards
 
-Before enabling the dashboard/admin workflows:
+Use `getCurrentAuthSession` for server-only session lookup and `requireActiveUser`, `requireAuthRole`, or `requireAnyAuthRole` for protected route handlers and future server actions.
 
-- Add `editor` for publishing, scheduling, metadata, and author review.
-- Add `moderator` for comment queues, spam handling, and moderation audit context.
-- Add `support` for subscriber, entitlement, feed-token, and documented billing-support workflows.
-- Keep `reader` as the default public account role for profile/session management, comments, free-subscriber content, and paid content when an active entitlement allows it.
+Role intent:
 
-Role checks should also require an active user. The helper functions return false for disabled users so route handlers and future server actions can share the same guard behavior.
+- `reader`: account, profile, comments, subscriber content when entitlements allow it
+- `author`: authorship attribution and draft ownership
+- `editor`: publishing, scheduling, metadata, and author review
+- `moderator`: comment queues, spam handling, and moderation audit workflows
+- `support`: subscriber, entitlement, feed-token, and billing-support workflows
+- `admin`: full operational administration
+
+Role checks also require an active user. Disabled users fail helpers and guards even when their role array still contains a privileged role.

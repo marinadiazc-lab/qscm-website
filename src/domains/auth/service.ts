@@ -13,6 +13,17 @@ import type {
   OAuthProviderProfile,
 } from "./types";
 
+export const launchAuthRoles = [
+  "reader",
+  "author",
+  "editor",
+  "moderator",
+  "support",
+  "admin",
+] as const satisfies readonly AuthRole[];
+
+const oauthProviders = ["google", "facebook", "apple"] as const satisfies readonly OAuthProvider[];
+
 export interface DecideOAuthAccountLinkInput {
   profile: OAuthProviderProfile;
   targetUser?: AuthUser;
@@ -24,6 +35,10 @@ export function isOAuthProvider(
   provider: AuthProvider,
 ): provider is OAuthProvider {
   return provider !== "email_magic_link";
+}
+
+export function parseOAuthProvider(provider: string): OAuthProvider | undefined {
+  return oauthProviders.find((candidate) => candidate === provider);
 }
 
 export function normalizeAuthEmail(email: string): string {

@@ -4,9 +4,13 @@ import {
   canConsumeMagicLink,
   consumeMagicLinkRequest,
   decideOAuthAccountLink,
+  getOAuthProviderConfig,
   hasAuthRole,
+  launchAuthRoles,
   InMemoryAuthRepository,
   normalizeAuthEmail,
+  requireAnyAuthRole,
+  requireAuthRole,
   revokeMagicLinkRequest,
   type AuthAccount,
   type AuthSession,
@@ -191,5 +195,61 @@ describe("in-memory auth repository", () => {
       roles: ["reader"],
     });
     expect(hasAuthRole(repository.findUserById("user_1")!, "admin")).toBe(false);
+  });
+});
+
+describe("provider configuration", () => {
+  it("keeps OAuth providers disabled until credentials are present", () => {
+    const config = getOAuthProviderConfig("google", {});
+
+    expect(config.enabled).toBe(false);
+    expect(config.disabledReason).toContain("AUTH_GOOGLE_CLIENT_ID");
+  });
+
+  it("enables an OAuth provider when both env credentials are present", () => {
+    const config = getOAuthProviderConfig("facebook", {
+      AUTH_FACEBOOK_CLIENT_ID: "client",
+      AUTH_FACEBOOK_CLIENT_SECRET: "secret",
+    });
+
+    expect(config).toMatchObject({
+      provider: "facebook",
+      enabled: true,
+      clientId: "client",
+      clientSecret: "secret",
+    });
+  });
+});
+
+describe("RBAC guards", () => {
+  it("defines the launch role set", () => {
+    expect(launchAuthRoles).toEqual([
+      "reader",
+      "author",
+      "editor",
+      "moderator",
+      "support",
+      "admin",
+    ]);
+  });
+
+  it("allows active users through matching role guards", () => {
+    const editor = user({ roles: ["reader", "editor"] });
+
+    expect(requireAuthRole(editor, "editor")).toBe(editor);
+    expect(requireAnyAuthRole(editor, ["support", "editor"])).toBe(editor);
+  });
+
+  it("blocks disabled users even when the role is present", () => {
+    expect(() =>
+      requireAuthRole(
+        user({
+          roles: ["admin"],
+          status: "disabled",
+          disabledAt: now,
+        }),
+        "admin",
+      ),
+    ).toThrow("Authentication is required.");
   });
 });

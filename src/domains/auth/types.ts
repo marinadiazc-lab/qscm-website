@@ -14,7 +14,13 @@ export type AuthProvider =
 
 export type OAuthProvider = Exclude<AuthProvider, "email_magic_link">;
 
-export type AuthRole = "reader" | "author" | "admin";
+export type AuthRole =
+  | "reader"
+  | "author"
+  | "editor"
+  | "moderator"
+  | "support"
+  | "admin";
 
 export type AuthUserStatus = "active" | "disabled";
 
