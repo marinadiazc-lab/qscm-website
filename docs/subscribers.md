@@ -18,8 +18,9 @@ Implemented surfaces:
   intentionally disabled until the product has authenticated access or signed
   preference tokens. Do not allow preference lookup or mutation by plain email
   or subscriber id.
-- `/admin/subscribers` and `/admin/subscribers/export` are intentionally
-  disabled until #193 adds server-side RBAC and persistent operation audit logs.
+- `/admin/subscribers` is now a protected read-only subscriber inspection page
+  with search/filter support, account/subscription/email-sync summary columns,
+  and a protected CSV export at `/admin/subscribers/export`.
   Do not expose subscriber emails, ids, import, or export publicly.
 
 ## Domain Rules
@@ -42,8 +43,9 @@ Implemented surfaces:
 
 ## CSV Import Foundation
 
-Import/export helpers exist in the domain layer for the future protected admin
-surface, but the public admin route is disabled until #193.
+Import helpers exist in the domain layer for the future protected admin surface.
+The visible admin import action remains disabled until audited mutation flows
+are wired.
 
 Supported input columns:
 
@@ -63,7 +65,7 @@ Export columns:
 
 `id,email,name,status,source,userId,marketingEmailOptIn,productEmailOptIn,commentNotificationOptIn,syncStatus,syncProvider,createdAt,updatedAt`
 
-PII must remain limited to protected admin routes once #193 lands.
+PII must remain limited to protected admin routes.
 
 ## Follow-Ups
 
