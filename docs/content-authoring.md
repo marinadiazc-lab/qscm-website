@@ -23,6 +23,16 @@ status: "published"
 visibility: "public"
 tags:
   - updates
+coverImage:
+  src: "/media/qscm-cover.svg"
+  alt: "QSCM editorial cover artwork"
+seo:
+  title: "Welcome to the archive"
+  description: "A public post example with search metadata."
+media:
+  - src: "/media/qscm-cover.svg"
+    kind: "image"
+    alt: "QSCM editorial cover artwork"
 ---
 
 Write the post here.
@@ -44,6 +54,12 @@ Write the post here.
 | `tags` | No | `[]` | Search, filtering, or index tags. |
 | `updatedAt` | No |  | Optional last-updated date. |
 | `canonicalUrl` | No |  | Optional canonical URL if the canonical version lives elsewhere. |
+| `coverImage` | No |  | Optional `{ src, alt, caption }` image shown above the post body. |
+| `seo` | No | `{}` | Optional `title`, `description`, `canonicalUrl`, and `image` overrides for metadata. |
+| `media` | No | `[]` | Optional list of media references used by the post. Image entries require `alt`. |
+
+Invalid frontmatter fails the build with the source file and field names. Slugs
+must use lowercase letters, numbers, and hyphens.
 
 ## Visibility
 
@@ -71,6 +87,85 @@ tierIds:
 ---
 ```
 
-## Drafts and Routes
+## Drafts, Scheduled Posts, and Routes
 
-Published posts are included in `/posts`, `/posts/[slug]`, and static slug generation. Draft posts remain readable by the file loader only when callers explicitly request drafts, so authors can keep unfinished work in the repository without changing public routes.
+Published posts are included in `/posts`, `/posts/[slug]`, and static slug
+generation only when `publishedAt` is not in the future. Draft posts and
+scheduled posts remain readable by the file loader only when callers explicitly
+request unpublished content, so authors can keep unfinished work in the
+repository without changing public routes.
+
+Use these combinations:
+
+| Intent | `status` | `publishedAt` |
+| --- | --- | --- |
+| Public now | `published` | Now or earlier |
+| Scheduled | `published` | Future date/time |
+| Draft | `draft` | Any date |
+
+## Preview Skeleton
+
+The preview endpoint is available at
+`/api/preview?secret=<PREVIEW_SECRET>&slug=<post-slug>`. It enables Next draft
+mode and then redirects to the post route, where the same production post
+component renders unpublished content.
+
+This is a skeleton until admin permissions are attached. Do not share preview
+secrets broadly, and do not treat this as a complete editorial authorization
+system.
+
+Disable preview mode with `/api/preview/disable`.
+
+## Media References
+
+Local media lives under `public/` and is referenced from MDX or frontmatter with
+absolute paths such as `/media/qscm-cover.svg`. Remote media must use an
+`http://` or `https://` URL.
+
+Supported patterns:
+
+```mdx
+![QSCM editorial cover](/media/qscm-cover.svg)
+
+<audio src="/media/member-briefing.mp3" />
+
+<video src="/media/walkthrough.mp4" />
+```
+
+Local references in `coverImage`, `seo.image`, `media`, Markdown images, MDX
+`audio`/`video`/`source`/`track`/`img` tags, video posters, media-like download
+links, and local `embed`/`iframe`/`object` references are checked during the
+build. Missing files fail clearly instead of silently publishing broken media.
+
+## Static Inner Pages
+
+Simple static pages are MDX files in `content/pages`. They do not require a
+WYSIWYG editor and render at `/<slug>`.
+
+```mdx
+---
+title: "About QSCM"
+slug: "about"
+excerpt: "A static page authored in MDX."
+seo:
+  title: "About QSCM"
+  description: "Learn about QSCM."
+---
+
+Write the page body here.
+```
+
+The `seo` fields drive static page metadata.
+
+## Fixtures
+
+Current fixtures cover the main states:
+
+| File | Purpose |
+| --- | --- |
+| `content/posts/welcome.mdx` | Public post with cover image, SEO, and media references. |
+| `content/posts/free-subscriber-note.mdx` | Free subscriber visibility. |
+| `content/posts/paid-foundation.mdx` | Paid subscriber visibility. |
+| `content/posts/scheduled-briefing.mdx` | Scheduled post hidden from public output. |
+| `content/posts/draft-lab-note.mdx` | Draft post hidden from public output. |
+| `content/pages/about.mdx` | Static inner page pattern. |

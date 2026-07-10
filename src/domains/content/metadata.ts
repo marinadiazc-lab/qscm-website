@@ -4,6 +4,7 @@ import type { PostFrontmatter, PostMetadataIndexEntry } from "./types";
 export function createPostMetadataIndexEntry(
   frontmatter: PostFrontmatter,
   sourcePath: string,
+  now = new Date(),
 ): PostMetadataIndexEntry {
   return {
     slug: frontmatter.slug,
@@ -12,6 +13,12 @@ export function createPostMetadataIndexEntry(
     excerpt: frontmatter.excerpt,
     author: frontmatter.author,
     status: frontmatter.status,
+    publicationState:
+      frontmatter.status === "draft"
+        ? "draft"
+        : frontmatter.publishedAt.getTime() > now.getTime()
+          ? "scheduled"
+          : "published",
     visibility: frontmatter.visibility,
     accessRequirement: derivePostAccessRequirement(frontmatter),
     publishedAt: frontmatter.publishedAt,
@@ -20,5 +27,8 @@ export function createPostMetadataIndexEntry(
     tags: [...frontmatter.tags],
     updatedAt: frontmatter.updatedAt,
     canonicalUrl: frontmatter.canonicalUrl,
+    coverImage: frontmatter.coverImage,
+    seo: frontmatter.seo,
+    media: [...frontmatter.media],
   };
 }

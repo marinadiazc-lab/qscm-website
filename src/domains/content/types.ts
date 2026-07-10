@@ -19,6 +19,8 @@ export type ContentTierId = string;
 export const POST_STATUSES = ["draft", "published"] as const;
 export type PostStatus = (typeof POST_STATUSES)[number];
 
+export type PostPublicationState = "draft" | "scheduled" | "published";
+
 export const POST_VISIBILITIES = [
   "public",
   "free_subscribers",
@@ -40,6 +42,31 @@ export interface PostFrontmatter {
   tags: string[];
   updatedAt?: Date;
   canonicalUrl?: string;
+  coverImage?: ContentImage;
+  seo?: ContentSeo;
+  media: ContentMediaReference[];
+}
+
+export type ContentMediaKind = "image" | "audio" | "video" | "download" | "embed";
+
+export interface ContentImage {
+  src: string;
+  alt: string;
+  caption?: string;
+}
+
+export interface ContentSeo {
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+  image?: string;
+}
+
+export interface ContentMediaReference {
+  src: string;
+  kind: ContentMediaKind;
+  title?: string;
+  alt?: string;
 }
 
 export type PostAccessRule =
@@ -63,6 +90,7 @@ export interface PostMetadataIndexEntry {
   excerpt: string;
   author: string;
   status: PostStatus;
+  publicationState: PostPublicationState;
   visibility: PostVisibility;
   accessRequirement: PostAccessRequirement;
   publishedAt: Date;
@@ -71,6 +99,9 @@ export interface PostMetadataIndexEntry {
   tags: string[];
   updatedAt?: Date;
   canonicalUrl?: string;
+  coverImage?: ContentImage;
+  seo?: ContentSeo;
+  media: ContentMediaReference[];
 }
 
 export type PostMetadataIndex = Record<PostSlug, PostMetadataIndexEntry>;
