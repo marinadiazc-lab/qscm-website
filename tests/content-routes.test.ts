@@ -6,14 +6,17 @@ import {
   getPostMetadataIndex,
 } from "../src/content/posts";
 
+const publishedSlugs = ["welcome", "paid-foundation", "free-subscriber-note"];
+
 describe("post content routing data", () => {
   it("exposes only published slugs for static post routes", () => {
-    expect(getAllPostSlugs()).toEqual(["welcome", "paid-foundation"]);
+    expect(getAllPostSlugs()).toEqual(publishedSlugs);
   });
 
   it("loads public and private posts with the access metadata used by routes", () => {
     const publicPost = getPostBySlug("welcome");
     const paidPost = getPostBySlug("paid-foundation");
+    const freeSubscriberPost = getPostBySlug("free-subscriber-note");
 
     expect(publicPost).toMatchObject({
       slug: "welcome",
@@ -35,10 +38,20 @@ describe("post content routing data", () => {
         requiresPaidSubscription: true,
       },
     });
+    expect(freeSubscriberPost).toMatchObject({
+      slug: "free-subscriber-note",
+      visibility: "free_subscribers",
+      visibilityLabel: "Free subscribers",
+      accessRequirement: {
+        rule: "free_subscriber",
+        requiresAuthentication: true,
+        requiresPaidSubscription: false,
+      },
+    });
   });
 
   it("returns posts newest first and builds a metadata index for access checks", () => {
-    expect(getAllPosts().map((post) => post.slug)).toEqual(["welcome", "paid-foundation"]);
+    expect(getAllPosts().map((post) => post.slug)).toEqual(publishedSlugs);
     expect(getPostMetadataIndex()).toMatchObject({
       welcome: {
         slug: "welcome",
@@ -49,6 +62,11 @@ describe("post content routing data", () => {
         slug: "paid-foundation",
         visibility: "paid_any",
         accessRequirement: { rule: "paid_subscription" },
+      },
+      "free-subscriber-note": {
+        slug: "free-subscriber-note",
+        visibility: "free_subscribers",
+        accessRequirement: { rule: "free_subscriber" },
       },
     });
   });
