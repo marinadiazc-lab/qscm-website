@@ -1,6 +1,6 @@
-import "dotenv/config";
+import { config } from "dotenv";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -8,10 +8,16 @@ import {
   publications,
   subscriptionTiers,
   tierPrices,
+  userRoles,
+  users,
   type SubscriptionTier,
 } from "../src/db/schema";
 
+config({ path: ".env.local" });
+config();
+
 const databaseUrl = process.env.DATABASE_URL;
+const adminEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@example.local").trim().toLowerCase();
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is required. See docs/database.md for local setup.");
@@ -108,8 +114,56 @@ async function seedPrices(
   }
 }
 
+async function seedAdminUser() {
+  const [existingAdmin] = await db
+    .select()
+    .from(users)
+    .where(sql`lower(${users.email}) = ${adminEmail}`)
+    .limit(1);
+
+  const [admin] = existingAdmin
+    ? await db
+        .update(users)
+        .set({
+          displayName: "QSCM Admin",
+          status: "active",
+          metadata: {
+            seeded: true,
+            source: "scripts/seed.ts",
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, existingAdmin.id))
+        .returning()
+    : await db
+        .insert(users)
+        .values({
+          email: adminEmail,
+          displayName: "QSCM Admin",
+          status: "active",
+          metadata: {
+            seeded: true,
+            source: "scripts/seed.ts",
+          },
+        })
+        .returning();
+
+  await db
+    .insert(userRoles)
+    .values({
+      userId: admin.id,
+      role: "admin",
+    })
+    .onConflictDoNothing({
+      target: [userRoles.userId, userRoles.role],
+    });
+
+  return admin;
+}
+
 async function main() {
   const publication = await seedPublication();
+  const admin = await seedAdminUser();
 
   await seedTier({
     publicationId: publication.id,
@@ -149,7 +203,9 @@ async function main() {
     .from(subscriptionTiers)
     .where(eq(subscriptionTiers.publicationId, publication.id));
 
-  console.log(`Seeded publication ${publication.slug} with ${tiers.length} tiers.`);
+  console.log(
+    `Seeded publication ${publication.slug} with ${tiers.length} tiers and admin ${admin.email}.`,
+  );
 }
 
 main()

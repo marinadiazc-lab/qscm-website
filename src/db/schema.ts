@@ -23,7 +23,14 @@ export const authProviderEnum = pgEnum("auth_provider", [
   "apple",
   "email_magic_link",
 ]);
-export const authRoleEnum = pgEnum("auth_role", ["reader", "author", "admin"]);
+export const authRoleEnum = pgEnum("auth_role", [
+  "reader",
+  "author",
+  "editor",
+  "moderator",
+  "support",
+  "admin",
+]);
 export const userStatusEnum = pgEnum("auth_user_status", ["active", "disabled"]);
 export const accountStatusEnum = pgEnum("auth_account_status", [
   "active",

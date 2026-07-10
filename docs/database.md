@@ -10,10 +10,14 @@ Create a local `.env.local` file with a Postgres connection string:
 
 ```bash
 DATABASE_URL=postgres://qscm:qscm@localhost:5432/qscm
+SEED_ADMIN_EMAIL=admin@example.local
 ```
 
 Do not commit real connection strings or provider credentials. Local `.env*`
 files are ignored by git.
+
+Database commands load `.env.local` first and then `.env`, so the documented
+local setup works without exporting variables in every terminal session.
 
 Production should use a managed Postgres provider that supports point-in-time
 recovery, encrypted storage, restricted network access, and separate credentials
@@ -40,14 +44,16 @@ Apply migrations to the database in `DATABASE_URL`:
 npm run db:migrate
 ```
 
-Seed the first publication and sample tiers:
+Seed the first publication, admin user/role, and sample tiers:
 
 ```bash
 npm run db:seed
 ```
 
-The seed is idempotent. It upserts the `qscm` publication and the `supporter`
-and `founding-member` tiers with monthly and annual prices.
+The seed is idempotent. It upserts the `qscm` publication, creates or refreshes
+the admin user from `SEED_ADMIN_EMAIL` (defaulting to `admin@example.local`),
+grants that user the `admin` role, and upserts the `supporter` and
+`founding-member` tiers with monthly and annual prices.
 
 ## Local Verification
 
