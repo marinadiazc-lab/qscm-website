@@ -108,6 +108,101 @@ describe("Resend provider", () => {
       } as NodeJS.ProcessEnv),
     ).toThrow(/Refusing to create a live Resend provider during tests/);
   });
+
+  it("keeps suppressed contacts unsubscribed during Resend sync", async () => {
+    const create = vi.fn().mockResolvedValue({ data: { id: "contact_1" } });
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+        defaultAudienceId: "audience_1",
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+          contacts: { create, update: vi.fn() },
+        },
+      },
+    );
+
+    await provider.upsertContact({
+      publicationId: "pub_1",
+      email: "reader@example.com",
+      status: "bounced",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "reader@example.com",
+        unsubscribed: true,
+      }),
+    );
+  });
+
+  it("does not pretend unsupported membership operations succeeded", async () => {
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+        },
+      },
+    );
+
+    await expect(
+      provider.addContactToAudience({
+        contact: { contactId: "contact_1" },
+        audienceId: "audience_1",
+      }),
+    ).rejects.toThrow(/does not support a separate addContactToAudience/);
+    await expect(
+      provider.addContactToSegment({
+        contact: { contactId: "contact_1" },
+        segmentId: "segment_1",
+      }),
+    ).rejects.toThrow(/Segment membership is not implemented/i);
+  });
+
+  it("creates draft broadcasts and rejects incomplete scheduled orchestration", async () => {
+    const create = vi.fn().mockResolvedValue({ data: { id: "broadcast_1" } });
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        now: () => now,
+        client: {
+          emails: { send: vi.fn() },
+          broadcasts: { create },
+        },
+      },
+    );
+
+    const draft = await provider.createBroadcast({
+      publicationId: "pub_1",
+      content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+      target: { segmentIds: ["segment_1"] },
+    });
+
+    expect(draft).toMatchObject({ status: "draft", providerBroadcastId: "broadcast_1" });
+    expect(create).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        scheduledAt: expect.any(String),
+      }),
+    );
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { segmentIds: ["segment_1"] },
+        scheduledAt: new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/Scheduled Resend broadcast orchestration is not implemented/);
+  });
 });
 
 describe("email send service", () => {
@@ -150,7 +245,51 @@ describe("email send service", () => {
     expect(first.accepted).toBe(true);
     expect(duplicate).toMatchObject({ accepted: false, status: "skipped_duplicate" });
     expect(provider.sendTransactional).toHaveBeenCalledTimes(1);
+    expect(await repository.listIntents()).toMatchObject([
+      {
+        status: "sent",
+        providerMessageId: "message_1",
+      },
+    ]);
     expect(await repository.listDeliveryLogs()).toHaveLength(2);
+  });
+
+  it("does not overwrite a failed original intent on duplicate attempts", async () => {
+    const provider = {
+      key: "in_memory",
+      sendTransactional: vi.fn().mockRejectedValue(new Error("Provider down")),
+      upsertContact: vi.fn(),
+      updateContactStatus: vi.fn(),
+      upsertAudience: vi.fn(),
+      upsertSegment: vi.fn(),
+      addContactToAudience: vi.fn(),
+      removeContactFromAudience: vi.fn(),
+      addContactToSegment: vi.fn(),
+      removeContactFromSegment: vi.fn(),
+      createBroadcast: vi.fn(),
+      sendBroadcast: vi.fn(),
+    };
+    const repository = new InMemoryEmailSendIntentRepository(() => now);
+    const service = new EmailSendService(repository, provider);
+    const input = {
+      publicationId: "pub_1",
+      purpose: "magic_link" as const,
+      dedupeKey: "magic:failed",
+      to: { email: "reader@example.com" },
+      content: { subject: "Sign in", text: "Use this link." },
+    };
+
+    await expect(service.sendTransactional(input)).rejects.toThrow("Provider down");
+    const duplicate = await service.sendTransactional(input);
+
+    expect(duplicate).toMatchObject({ accepted: false, status: "skipped_duplicate" });
+    expect(provider.sendTransactional).toHaveBeenCalledTimes(1);
+    expect(await repository.listIntents()).toMatchObject([
+      {
+        status: "failed",
+        errorMessage: "Provider down",
+      },
+    ]);
   });
 });
 

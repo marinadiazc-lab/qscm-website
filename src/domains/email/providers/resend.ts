@@ -100,7 +100,7 @@ export class ResendEmailProvider implements EmailProvider {
       audienceId,
       email: input.email.trim().toLowerCase(),
       firstName: input.name,
-      unsubscribed: input.status === "unsubscribed",
+      unsubscribed: isProviderSuppressedStatus(input.status),
     };
     const existingContactId = input.providerContactId;
     const response = existingContactId
@@ -141,7 +141,7 @@ export class ResendEmailProvider implements EmailProvider {
 
     const response = await this.client.contacts?.update({
       id: input.contact.contactId,
-      unsubscribed: input.status === "unsubscribed",
+      unsubscribed: isProviderSuppressedStatus(input.status),
     });
 
     if (response?.error) {
@@ -208,45 +208,37 @@ export class ResendEmailProvider implements EmailProvider {
   }
 
   async addContactToAudience(
-    input: EmailAudienceMembershipInput,
+    _input: EmailAudienceMembershipInput,
   ): Promise<EmailAudienceMembership> {
-    return {
-      contact: input.contact,
-      audienceId: input.audienceId,
-      status: "active",
-      updatedAt: this.now(),
-    };
+    throw new EmailProviderError(
+      "Resend contact audience membership is managed by contact create/update; this adapter does not support a separate addContactToAudience operation.",
+      this.key,
+    );
   }
 
   async removeContactFromAudience(
-    input: EmailAudienceMembershipInput,
+    _input: EmailAudienceMembershipInput,
   ): Promise<EmailAudienceMembership> {
-    return {
-      contact: input.contact,
-      audienceId: input.audienceId,
-      status: "removed",
-      updatedAt: this.now(),
-    };
+    throw new EmailProviderError(
+      "Resend contact audience membership is managed by contact create/update; this adapter does not support a separate removeContactFromAudience operation.",
+      this.key,
+    );
   }
 
-  async addContactToSegment(input: EmailSegmentMembershipInput): Promise<EmailSegmentMembership> {
-    return {
-      contact: input.contact,
-      segmentId: input.segmentId,
-      status: "active",
-      updatedAt: this.now(),
-    };
+  async addContactToSegment(_input: EmailSegmentMembershipInput): Promise<EmailSegmentMembership> {
+    throw new EmailProviderError(
+      "Resend segment membership is not implemented by this adapter; sync segment rules through the Resend dashboard/API before enabling this workflow.",
+      this.key,
+    );
   }
 
   async removeContactFromSegment(
-    input: EmailSegmentMembershipInput,
+    _input: EmailSegmentMembershipInput,
   ): Promise<EmailSegmentMembership> {
-    return {
-      contact: input.contact,
-      segmentId: input.segmentId,
-      status: "removed",
-      updatedAt: this.now(),
-    };
+    throw new EmailProviderError(
+      "Resend segment membership is not implemented by this adapter; sync segment rules through the Resend dashboard/API before enabling this workflow.",
+      this.key,
+    );
   }
 
   async sendTransactional(input: SendTransactionalEmailInput): Promise<EmailSendResult> {
@@ -286,6 +278,13 @@ export class ResendEmailProvider implements EmailProvider {
   }
 
   async createBroadcast(input: CreateEmailBroadcastInput): Promise<EmailBroadcast> {
+    if (input.scheduledAt) {
+      throw new EmailProviderError(
+        "Scheduled Resend broadcast orchestration is not implemented by this adapter yet; create a draft broadcast and schedule it through a dedicated workflow.",
+        this.key,
+      );
+    }
+
     const segmentId = input.target.segmentIds?.[0] ?? input.target.audienceIds?.[0];
 
     if (!segmentId) {
@@ -303,7 +302,6 @@ export class ResendEmailProvider implements EmailProvider {
       subject: input.content.subject,
       html: input.content.html,
       text: input.content.text,
-      scheduledAt: input.scheduledAt?.toISOString(),
     });
 
     if (response?.error) {
@@ -316,13 +314,12 @@ export class ResendEmailProvider implements EmailProvider {
       provider: this.key,
       publicationId: input.publicationId,
       key: input.key,
-      status: input.scheduledAt ? "scheduled" : "draft",
+      status: "draft",
       from: input.from ?? this.config.defaultFrom,
       replyTo: input.replyTo ?? this.config.defaultReplyTo,
       content: input.content,
       target: input.target,
       providerBroadcastId: response?.data?.id,
-      scheduledAt: input.scheduledAt,
       metadata: input.metadata,
       createdAt: now,
       updatedAt: now,
@@ -330,9 +327,15 @@ export class ResendEmailProvider implements EmailProvider {
   }
 
   async sendBroadcast(input: SendEmailBroadcastInput): Promise<EmailSendResult> {
+    if (input.scheduledAt) {
+      throw new EmailProviderError(
+        "Scheduled Resend broadcast sending is not implemented by this adapter yet; send immediately or use a dedicated scheduler workflow.",
+        this.key,
+      );
+    }
+
     const response = this.client.broadcasts?.send
       ? await this.client.broadcasts.send(input.broadcastId, {
-          scheduledAt: input.scheduledAt?.toISOString(),
         })
       : { data: { id: input.broadcastId } };
 
@@ -432,6 +435,15 @@ function toResendTags(tags: string[] | undefined, metadata: Record<string, unkno
       name: sanitizeTag(String(name)),
       value: sanitizeTag(String(value)),
     }));
+}
+
+function isProviderSuppressedStatus(status: string | undefined) {
+  return (
+    status === "unsubscribed" ||
+    status === "bounced" ||
+    status === "complained" ||
+    status === "suppressed"
+  );
 }
 
 function sanitizeTag(value: string) {

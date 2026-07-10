@@ -58,7 +58,7 @@ export class DrizzleEmailSendIntentRepository implements EmailSendIntentReposito
       .where(
         and(
           eq(schema.emailSendIntents.id, intentId),
-          inArray(schema.emailSendIntents.status, ["pending", "failed"]),
+          inArray(schema.emailSendIntents.status, ["pending"]),
         ),
       )
       .returning();

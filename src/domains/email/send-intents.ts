@@ -62,7 +62,7 @@ export class InMemoryEmailSendIntentRepository implements EmailSendIntentReposit
   async reserve(intentId: string, provider: string): Promise<EmailSendIntent> {
     const intent = this.requireIntent(intentId);
 
-    if (intent.status === "sent" || intent.status === "reserved" || intent.status === "sending") {
+    if (intent.status !== "pending") {
       return cloneIntent({ ...intent, status: "skipped_duplicate" });
     }
 
@@ -194,7 +194,7 @@ export class EmailSendService {
 
     if (isDuplicateReservation(reservation.status)) {
       const result = duplicateResult(this.provider.key, toIntentReference(intent));
-      await this.repository.markResult(intent.id, result);
+      await this.logDuplicate(intent, result);
       return result;
     }
 
@@ -227,7 +227,7 @@ export class EmailSendService {
 
     if (isDuplicateReservation(reservation.status)) {
       const result = duplicateResult(this.provider.key, toIntentReference(intent), input.broadcastId);
-      await this.repository.markResult(intent.id, result);
+      await this.logDuplicate(intent, result);
       return result;
     }
 
@@ -242,6 +242,22 @@ export class EmailSendService {
       await this.repository.markFailed(intent.id, safeError(error));
       throw error;
     }
+  }
+
+  private async logDuplicate(intent: EmailSendIntent, result: EmailSendResult) {
+    await this.repository.logDelivery({
+      publicationId: intent.publicationId,
+      intentId: intent.id,
+      broadcastId: intent.broadcastId ?? result.broadcastId,
+      subscriberId: intent.subscriberId,
+      recipientEmail: intent.recipientEmail,
+      provider: result.provider,
+      providerMessageId: intent.providerMessageId,
+      eventType: "skipped_duplicate",
+      level: "warning",
+      message: result.skippedReason,
+      metadata: { dedupeKey: result.dedupeKey },
+    });
   }
 }
 

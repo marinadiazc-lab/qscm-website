@@ -32,7 +32,7 @@ from the app; it should not become the place where product access is decided.
 Every transactional or broadcast send should be created from a local send intent
 before it reaches a provider. `EmailSendService` reserves the intent, calls the
 provider once, stores the provider message id, and records skipped duplicates as
-delivery logs. Server code can import
+delivery logs without changing the original terminal intent row. Server code can import
 `src/domains/email/repository.ts` directly for `DrizzleEmailSendIntentRepository`,
 which uses the database unique index on `(publication_id, dedupe_key)` and a
 conditional reservation update so concurrent workers cannot reserve the same
@@ -77,11 +77,17 @@ changing post visibility behavior.
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
 posts map tier ids to configured segment ids.
 
+The Resend adapter currently creates draft broadcasts only. Scheduled broadcast
+orchestration remains in #50 so the implementation can match the provider
+contract end to end instead of passing incomplete scheduling fields.
+
 ## Provider Events
 
 Resend webhooks should be verified with the raw request body and the Svix
 headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
-`EmailProviderEventProcessor` is idempotent by provider event id and maps:
+`EmailProviderEventProcessor` dedupes provider event ids only for the lifetime
+of the process. Durable webhook idempotency must persist `email_provider_events`
+before #52 can close. The in-process processor maps:
 
 - `contact.unsubscribed` to local `unsubscribed`
 - `email.bounced` to local `bounced`
