@@ -20,6 +20,13 @@ type EngagementSummary = {
   commentCount: number;
 };
 
+type EngagementResponse = {
+  ok?: boolean;
+  message?: string;
+  fieldErrors?: Record<string, string>;
+  status?: string;
+};
+
 const emptySummary: EngagementSummary = {
   likeCount: 0,
   viewerHasLiked: false,
@@ -95,7 +102,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
       });
       const result = await response.json();
 
-      setCommentMessage(result.message ?? "Comment received.");
+      setCommentMessage(formatResponseMessage(result, "Comment received."));
 
       if (response.ok && result.ok) {
         form.reset();
@@ -119,7 +126,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
       });
       const result = await response.json();
 
-      setShareMessage(result.message ?? "Share recorded.");
+      setShareMessage(formatResponseMessage(result, "Share recorded."));
 
       if (response.ok && result.ok) {
         form.reset();
@@ -219,4 +226,14 @@ export function PostEngagement({ post }: { post: PostSummary }) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function formatResponseMessage(result: EngagementResponse, fallback: string) {
+  const fieldErrors = Object.values(result.fieldErrors ?? {});
+
+  if (fieldErrors.length > 0) {
+    return [result.message, ...fieldErrors].filter(Boolean).join(" ");
+  }
+
+  return result.message ?? fallback;
 }

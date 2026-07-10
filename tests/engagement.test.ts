@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { getPostBySlug } from "../src/content/posts";
 import { InMemoryEmailProvider } from "../src/domains/email";
 import {
+  createEngagementPostMetadata,
   EngagementService,
   InMemoryEngagementRepository,
   type EngagementActor,
@@ -125,6 +127,29 @@ describe("engagement service", () => {
     });
   });
 
+  it("returns field errors for invalid comment submissions", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const service = new EngagementService(repository, { now: () => now });
+
+    expect(
+      await service.submitComment({
+        postSlug: "welcome",
+        body: "",
+        name: "",
+        email: "not-an-email",
+        actor,
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "invalid",
+      fieldErrors: {
+        body: "Comment body is required.",
+        name: "Name is required.",
+        email: "A valid email is required.",
+      },
+    });
+  });
+
   it("records email shares without a provider and queues through the email interface when supplied", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
     const emailProvider = new InMemoryEmailProvider({ now: () => now });
@@ -158,5 +183,26 @@ describe("engagement service", () => {
       status: "queued",
     });
     expect(emailProvider.listSentResults()).toHaveLength(1);
+    expect(emailProvider.listSentResults()[0].dedupeKey).not.toContain("friend2@example.com");
+    expect(emailProvider.listSentResults()[0].dedupeKey).toMatch(
+      /share:welcome:actor_hash_2:[a-f0-9]{64}/,
+    );
+  });
+
+  it("maps a valid MDX post into database post metadata for engagement persistence", () => {
+    const post = getPostBySlug("welcome");
+
+    expect(post).toBeDefined();
+    if (!post) return;
+
+    expect(createEngagementPostMetadata(post)).toMatchObject({
+      slug: "welcome",
+      title: "Welcome to the QSCM foundation",
+      sourcePath: expect.stringContaining("content/posts/welcome.mdx"),
+      sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      status: "published",
+      visibility: "public",
+      tags: ["updates"],
+    });
   });
 });

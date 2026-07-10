@@ -46,6 +46,10 @@ Follow-up provider work should attach a real `EmailProvider`, create durable
 send intents before calling the provider, and decide the approved sender/from
 identity for reader-to-reader shares.
 
+Email-share dedupe keys and local share context must not include the raw
+recipient email address. Use a normalized email hash in identifiers and reserve
+the raw recipient address only for the provider `to` field at send time.
+
 ## Future Kit Adapter
 
 Kit can be added later as another `EmailProvider` implementation if creator CRM

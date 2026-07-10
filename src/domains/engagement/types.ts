@@ -14,6 +14,22 @@ export type EngagementActor =
 
 export type EngagementRequestContext = ModerationRequestContext & {
   anonymousActorHash?: string;
+  recipientEmailHash?: string;
+};
+
+export type EngagementPostMetadata = {
+  slug: string;
+  sourcePath: string;
+  sourceHash: string;
+  title: string;
+  excerpt: string;
+  author: string;
+  status: "draft" | "published";
+  visibility: "public" | "free_subscribers" | "paid_any" | "specific_tiers";
+  canonicalUrl?: string;
+  publishedAt?: Date;
+  updatedAt?: Date;
+  tags: string[];
 };
 
 export type EngagementComment = {

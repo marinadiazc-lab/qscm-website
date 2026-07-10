@@ -11,7 +11,7 @@ Moderation checks can return three outcomes:
 - `suspicious`: hold the comment in the suspicious queue for review.
 - `block`: store the blocked state without publishing the comment.
 
-The M09 implementation records comments, likes, share events, and moderation audit entries in the existing engagement tables when `DATABASE_URL` is configured. Local builds without database credentials use an in-memory fallback so the app still renders.
+The M09 implementation records comments, likes, share events, and moderation audit entries in the existing engagement tables when `DATABASE_URL` is configured. If a valid MDX post has not yet been synced into `post_metadata`, the engagement repository creates or updates that row from file metadata before writing likes, comments, or shares. Local builds without database credentials use an in-memory fallback so the app still renders.
 
 Commenter email addresses and website URLs are private fields. They can be used for notifications, abuse review, deduping, or future profile workflows, but public comment objects expose only the display name, author kind, body, post slug, and publish timestamps.
 
@@ -22,5 +22,7 @@ Launch checks currently include:
 - basic spam signals for blocked phrases, high link volume, and optional website URLs
 
 Suspicious comments are persisted with private fields and moderation audit entries so a moderation queue can read them. This PR intentionally does not build the broad admin dashboard or admin-auth enforcement; that remains M12/follow-up scope. Until moderator authentication is attached, queue access should stay server-internal or behind a separate guarded route.
+
+Registered-user and subscriber actors are modeled in the service/repository layer, but the current request runtime only has anonymous cookies available. Do not treat authenticated or subscriber engagement UI states as complete until a current-session/subscriber resolver is wired.
 
 AI moderation is still a hook shape only. A later provider can return categories, confidence, model metadata, and an allow/suspicious/block outcome without changing comment creation semantics.

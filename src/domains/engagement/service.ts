@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   moderationStatusForDecisions,
   toModerationAuditEntries,
@@ -231,7 +232,7 @@ export class EngagementService {
         postSlug: normalized.postSlug,
         channel: "email",
         actor: normalized.actor,
-        requestContext: normalized.requestContext,
+        requestContext: shareRequestContext(normalized),
         now: this.now(),
       });
 
@@ -246,7 +247,7 @@ export class EngagementService {
       postSlug: normalized.postSlug,
       channel: "email",
       actor: normalized.actor,
-      requestContext: normalized.requestContext,
+      requestContext: shareRequestContext(normalized),
       now: this.now(),
     });
 
@@ -266,13 +267,15 @@ export class EngagementService {
       };
     }
 
+    const recipientEmailHash = hashIdentifier(normalized.recipientEmail);
+
     try {
       await normalized.emailProvider.sendTransactional({
         publicationId: normalized.publicationId,
         purpose: "custom",
         intent: {
           id: `share_${normalized.postSlug}_${Date.now()}`,
-          dedupeKey: `share:${normalized.postSlug}:${actorHash}:${normalized.recipientEmail}`,
+          dedupeKey: `share:${normalized.postSlug}:${actorHash}:${recipientEmailHash}`,
         },
         to: { email: normalized.recipientEmail },
         content: {
@@ -405,4 +408,15 @@ function validateShare(input: SharePostByEmailInput) {
 
 function actorRateLimitKey(actor: EngagementActor) {
   return actor.kind === "registered_user" ? actor.userId : actor.anonymousActorHash;
+}
+
+function hashIdentifier(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function shareRequestContext(input: SharePostByEmailInput) {
+  return {
+    ...input.requestContext,
+    recipientEmailHash: hashIdentifier(input.recipientEmail),
+  };
 }

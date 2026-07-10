@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cookies, headers } from "next/headers";
-import { getAllPostSlugs } from "@/src/content/posts";
+import { getAllPostSlugs, getPostBySlug } from "@/src/content/posts";
 import type { EmailProvider } from "../email";
+import { createEngagementPostMetadata } from "./post-metadata";
 import { InMemoryEngagementRepository, PostgresEngagementRepository } from "./repository";
 import { EngagementService } from "./service";
 import type { EngagementActor, EngagementRequestContext } from "./types";
@@ -12,7 +13,11 @@ const fallbackRepository = new InMemoryEngagementRepository(getAllPostSlugs());
 export async function getEngagementService() {
   if (process.env.DATABASE_URL) {
     const { db } = await import("@/src/db");
-    return new EngagementService(new PostgresEngagementRepository(db));
+    return new EngagementService(
+      new PostgresEngagementRepository(db, {
+        resolvePostMetadata: resolvePostMetadataFromMdx,
+      }),
+    );
   }
 
   return new EngagementService(fallbackRepository);
@@ -51,6 +56,11 @@ export async function getRequestEngagementContext() {
 
 export function createNoopEmailProvider(): EmailProvider | undefined {
   return undefined;
+}
+
+function resolvePostMetadataFromMdx(postSlug: string) {
+  const post = getPostBySlug(postSlug, { includeUnpublished: true });
+  return post ? createEngagementPostMetadata(post) : undefined;
 }
 
 function hashValue(value: string) {

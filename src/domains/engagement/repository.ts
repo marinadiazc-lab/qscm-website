@@ -5,6 +5,7 @@ import type { ModerationAuditEntry, ModerationDecision, ModerationStatus } from 
 import type {
   EngagementActor,
   EngagementComment,
+  EngagementPostMetadata,
   EngagementRequestContext,
   ModerationQueueItem,
   ShareChannel,
@@ -48,11 +49,29 @@ export interface EngagementRepository {
   storeShare(input: StoreShareInput): Promise<boolean>;
 }
 
+export type EngagementPostMetadataResolver = (
+  postSlug: string,
+) => EngagementPostMetadata | undefined;
+
+export type PostgresEngagementRepositoryOptions = {
+  resolvePostMetadata?: EngagementPostMetadataResolver;
+  publicationSlug?: string;
+};
+
 export class PostgresEngagementRepository implements EngagementRepository {
-  constructor(private readonly db: DbClient) {}
+  private readonly resolvePostMetadata?: EngagementPostMetadataResolver;
+  private readonly publicationSlug: string;
+
+  constructor(
+    private readonly db: DbClient,
+    options: PostgresEngagementRepositoryOptions = {},
+  ) {
+    this.resolvePostMetadata = options.resolvePostMetadata;
+    this.publicationSlug = options.publicationSlug ?? "qscm";
+  }
 
   async postExists(postSlug: string): Promise<boolean> {
-    return Boolean(await this.findPostId(postSlug));
+    return Boolean(await this.findOrCreatePostId(postSlug));
   }
 
   async listApprovedComments(postSlug: string): Promise<EngagementComment[]> {
@@ -130,7 +149,7 @@ export class PostgresEngagementRepository implements EngagementRepository {
   }
 
   async storeComment(input: StoreCommentInput): Promise<EngagementComment | undefined> {
-    const postId = await this.findPostId(input.postSlug);
+    const postId = await this.findOrCreatePostId(input.postSlug);
     if (!postId) return undefined;
 
     const [comment] = await this.db
@@ -211,7 +230,7 @@ export class PostgresEngagementRepository implements EngagementRepository {
   }
 
   async hasLiked(postSlug: string, actor: EngagementActor): Promise<boolean> {
-    const postId = await this.findPostId(postSlug);
+    const postId = await this.findOrCreatePostId(postSlug);
     if (!postId) return false;
 
     const [row] = await this.db
@@ -224,7 +243,7 @@ export class PostgresEngagementRepository implements EngagementRepository {
   }
 
   async likePost(postSlug: string, actor: EngagementActor, now: Date): Promise<boolean> {
-    const postId = await this.findPostId(postSlug);
+    const postId = await this.findOrCreatePostId(postSlug);
     if (!postId) return false;
 
     await this.db
@@ -242,7 +261,7 @@ export class PostgresEngagementRepository implements EngagementRepository {
   }
 
   async countLikes(postSlug: string): Promise<number> {
-    const postId = await this.findPostId(postSlug);
+    const postId = await this.findOrCreatePostId(postSlug);
     if (!postId) return 0;
 
     const [row] = await this.db
@@ -254,7 +273,7 @@ export class PostgresEngagementRepository implements EngagementRepository {
   }
 
   async storeShare(input: StoreShareInput): Promise<boolean> {
-    const postId = await this.findPostId(input.postSlug);
+    const postId = await this.findOrCreatePostId(input.postSlug);
     if (!postId) return false;
 
     await this.db.insert(schema.postShares).values({
@@ -277,6 +296,69 @@ export class PostgresEngagementRepository implements EngagementRepository {
       .limit(1);
 
     return post?.id;
+  }
+
+  private async findOrCreatePostId(postSlug: string): Promise<string | undefined> {
+    const existingPostId = await this.findPostId(postSlug);
+    if (existingPostId) return existingPostId;
+
+    const metadata = this.resolvePostMetadata?.(postSlug);
+    if (!metadata) return undefined;
+
+    const [publication] = await this.db
+      .insert(schema.publications)
+      .values({
+        slug: this.publicationSlug,
+        name: "QSCM",
+        description: "The first QSCM publication.",
+        status: "active",
+      })
+      .onConflictDoUpdate({
+        target: schema.publications.slug,
+        set: {
+          status: "active",
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    const [post] = await this.db
+      .insert(schema.postMetadata)
+      .values({
+        publicationId: publication.id,
+        slug: metadata.slug,
+        sourcePath: metadata.sourcePath,
+        sourceHash: metadata.sourceHash,
+        title: metadata.title,
+        excerpt: metadata.excerpt,
+        author: metadata.author,
+        status: metadata.status,
+        visibility: metadata.visibility,
+        canonicalUrl: metadata.canonicalUrl,
+        publishedAt: metadata.publishedAt,
+        mdxUpdatedAt: metadata.updatedAt,
+        tags: metadata.tags,
+      })
+      .onConflictDoUpdate({
+        target: [schema.postMetadata.publicationId, schema.postMetadata.slug],
+        set: {
+          sourcePath: metadata.sourcePath,
+          sourceHash: metadata.sourceHash,
+          title: metadata.title,
+          excerpt: metadata.excerpt,
+          author: metadata.author,
+          status: metadata.status,
+          visibility: metadata.visibility,
+          canonicalUrl: metadata.canonicalUrl,
+          publishedAt: metadata.publishedAt,
+          mdxUpdatedAt: metadata.updatedAt,
+          tags: metadata.tags,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    return post.id;
   }
 }
 
