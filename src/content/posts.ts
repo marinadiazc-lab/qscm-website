@@ -102,13 +102,46 @@ function getMarkdownImageSources(body: string) {
   );
 }
 
+const mediaLikePathPattern =
+  /\.(a?ac|avif|csv|docx?|gif|jpe?g|m4a|m4v|mov|mp3|mp4|oga|ogg|pdf|png|pptx?|svg|txt|wav|webm|webp|xlsx?|zip)$/i;
+
+function isLikelyMediaAssetReference(src: string) {
+  const pathWithoutQueryOrHash = src.split(/[?#]/)[0];
+  return pathWithoutQueryOrHash.startsWith("/media/") || mediaLikePathPattern.test(pathWithoutQueryOrHash);
+}
+
+function getQuotedMdxAttributeSources(body: string, tagPattern: string, attribute: string) {
+  const pattern = new RegExp(
+    `<\\s*(?:${tagPattern})\\b[^>]*\\s${attribute}\\s*=\\s*(?:"([^"]+)"|'([^']+)'|\\{\\s*["']([^"']+)["']\\s*\\})`,
+    "gi",
+  );
+
+  return Array.from(body.matchAll(pattern)).map((match) => match[1] ?? match[2] ?? match[3]);
+}
+
+function getMdxMediaSources(body: string) {
+  const requiredMediaReferences = [
+    ...getQuotedMdxAttributeSources(body, "audio|video|source|track|img", "src"),
+    ...getQuotedMdxAttributeSources(body, "video", "poster"),
+  ];
+
+  const optionalMediaReferences = [
+    ...getQuotedMdxAttributeSources(body, "a", "href"),
+    ...getQuotedMdxAttributeSources(body, "embed|iframe", "src"),
+    ...getQuotedMdxAttributeSources(body, "object", "data"),
+  ].filter(isLikelyMediaAssetReference);
+
+  return [...requiredMediaReferences, ...optionalMediaReferences];
+}
+
 function validatePostMedia(post: Post, body: string) {
-  const references = [
+  const references = Array.from(new Set([
     post.coverImage?.src,
     post.seo.image,
     ...post.media.map((media) => media.src),
     ...getMarkdownImageSources(body),
-  ].filter((src): src is string => Boolean(src));
+    ...getMdxMediaSources(body),
+  ].filter((src): src is string => Boolean(src))));
 
   for (const src of references) {
     validateLocalMediaReference(src, post.sourcePath);

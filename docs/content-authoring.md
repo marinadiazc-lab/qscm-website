@@ -132,9 +132,10 @@ Supported patterns:
 <video src="/media/walkthrough.mp4" />
 ```
 
-Local references in `coverImage`, `seo.image`, `media`, and Markdown images are
-checked during the build. Missing files fail clearly instead of silently
-publishing broken media.
+Local references in `coverImage`, `seo.image`, `media`, Markdown images, MDX
+`audio`/`video`/`source`/`track`/`img` tags, video posters, media-like download
+links, and local `embed`/`iframe`/`object` references are checked during the
+build. Missing files fail clearly instead of silently publishing broken media.
 
 ## Static Inner Pages
 
