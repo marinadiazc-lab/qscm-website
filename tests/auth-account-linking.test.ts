@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   authSessionStatusForTime,
+  authorizeAdminSurface,
+  buildMagicLinkUrl,
   canConsumeMagicLink,
   consumeMagicLinkRequest,
   decideOAuthAccountLink,
+  getAuthBaseUrl,
+  getOAuthProviderConfig,
   hasAuthRole,
+  launchAuthRoles,
   InMemoryAuthRepository,
   normalizeAuthEmail,
+  requireAnyAuthRole,
+  requireAuthRole,
   revokeMagicLinkRequest,
   type AuthAccount,
   type AuthSession,
@@ -177,6 +184,50 @@ describe("sessions and magic links", () => {
       ),
     ).toMatchObject({ status: "expired" });
   });
+
+  it("claims a magic link only once before session work can proceed", () => {
+    const repository = new InMemoryAuthRepository({
+      magicLinkRequests: [requestedLink],
+    });
+
+    expect(repository.claimMagicLinkRequest("hash_1", now)).toMatchObject({
+      id: "magic_1",
+      status: "consumed",
+      consumedAt: now,
+    });
+    expect(repository.claimMagicLinkRequest("hash_1", now)).toBeUndefined();
+  });
+
+  it("allows only one concurrent-ish claimant for the same magic link", async () => {
+    const repository = new InMemoryAuthRepository({
+      magicLinkRequests: [requestedLink],
+    });
+    const [first, second] = await Promise.all([
+      repository.claimMagicLinkRequest("hash_1", now),
+      repository.claimMagicLinkRequest("hash_1", now),
+    ]);
+
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(repository.findMagicLinkRequestByTokenHash("hash_1")).toMatchObject({
+      status: "consumed",
+    });
+  });
+
+  it("does not claim expired magic links", () => {
+    const repository = new InMemoryAuthRepository({
+      magicLinkRequests: [
+        {
+          ...requestedLink,
+          expiresAt: new Date("2026-07-10T11:59:59.000Z"),
+        },
+      ],
+    });
+
+    expect(repository.claimMagicLinkRequest("hash_1", now)).toBeUndefined();
+    expect(repository.findMagicLinkRequestByTokenHash("hash_1")).toMatchObject({
+      status: "requested",
+    });
+  });
 });
 
 describe("in-memory auth repository", () => {
@@ -191,5 +242,102 @@ describe("in-memory auth repository", () => {
       roles: ["reader"],
     });
     expect(hasAuthRole(repository.findUserById("user_1")!, "admin")).toBe(false);
+  });
+});
+
+describe("provider configuration", () => {
+  it("keeps OAuth providers disabled until credentials are present", () => {
+    const config = getOAuthProviderConfig("google", {});
+
+    expect(config.enabled).toBe(false);
+    expect(config.disabledReason).toContain("AUTH_GOOGLE_CLIENT_ID");
+  });
+
+  it("enables an OAuth provider when both env credentials are present", () => {
+    const config = getOAuthProviderConfig("facebook", {
+      AUTH_FACEBOOK_CLIENT_ID: "client",
+      AUTH_FACEBOOK_CLIENT_SECRET: "secret",
+    });
+
+    expect(config).toMatchObject({
+      provider: "facebook",
+      enabled: true,
+      clientId: "client",
+      clientSecret: "secret",
+    });
+  });
+});
+
+describe("auth URLs", () => {
+  it("uses configured canonical app URLs instead of request origin data", () => {
+    expect(
+      getAuthBaseUrl({
+        NEXT_PUBLIC_SITE_URL: "https://qscm.example",
+      }),
+    ).toBe("https://qscm.example");
+    expect(
+      getAuthBaseUrl({
+        AUTH_APP_URL: "https://auth.example/",
+        NEXT_PUBLIC_SITE_URL: "https://qscm.example",
+      }),
+    ).toBe("https://auth.example");
+  });
+
+  it("builds magic-link token URLs from the canonical base URL", () => {
+    expect(
+      buildMagicLinkUrl({
+        baseUrl: "https://qscm.example",
+        token: "token_1",
+        redirectTo: "/account",
+      }),
+    ).toBe("https://qscm.example/api/auth/magic-link/consume?token=token_1&redirectTo=%2Faccount");
+  });
+});
+
+describe("RBAC guards", () => {
+  it("defines the launch role set", () => {
+    expect(launchAuthRoles).toEqual([
+      "reader",
+      "author",
+      "editor",
+      "moderator",
+      "support",
+      "admin",
+    ]);
+  });
+
+  it("allows active users through matching role guards", () => {
+    const editor = user({ roles: ["reader", "editor"] });
+
+    expect(requireAuthRole(editor, "editor")).toBe(editor);
+    expect(requireAnyAuthRole(editor, ["support", "editor"])).toBe(editor);
+  });
+
+  it("blocks disabled users even when the role is present", () => {
+    expect(() =>
+      requireAuthRole(
+        user({
+          roles: ["admin"],
+          status: "disabled",
+          disabledAt: now,
+        }),
+        "admin",
+      ),
+    ).toThrow("Authentication is required.");
+  });
+
+  it("protects the admin server surface from anonymous and non-admin users", () => {
+    expect(authorizeAdminSurface(undefined)).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
+    expect(authorizeAdminSurface(user())).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
+    expect(authorizeAdminSurface(user({ roles: ["reader", "admin"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
   });
 });

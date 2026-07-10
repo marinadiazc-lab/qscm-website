@@ -14,34 +14,42 @@ import type {
 } from "./types";
 
 export interface AuthRepository {
-  saveUser(user: AuthUser): AuthUser;
-  findUserById(id: AuthUserId): AuthUser | undefined;
-  findUserByEmail(email: string): AuthUser | undefined;
-  listUsers(): AuthUser[];
-  saveAccount(account: AuthAccount): AuthAccount;
-  findAccountById(id: AuthAccountId): AuthAccount | undefined;
+  saveUser(user: AuthUser): AuthUser | Promise<AuthUser>;
+  findUserById(id: AuthUserId): AuthUser | undefined | Promise<AuthUser | undefined>;
+  findUserByEmail(email: string): AuthUser | undefined | Promise<AuthUser | undefined>;
+  listUsers(): AuthUser[] | Promise<AuthUser[]>;
+  saveAccount(account: AuthAccount): AuthAccount | Promise<AuthAccount>;
+  findAccountById(id: AuthAccountId): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   findAccountByProvider(
     provider: AuthProvider,
     providerAccountId: AuthProviderAccountId,
-  ): AuthAccount | undefined;
-  listAccountsForUser(userId: AuthUserId): AuthAccount[];
-  saveSession(session: AuthSession): AuthSession;
-  findSessionById(id: AuthSessionId): AuthSession | undefined;
-  listSessionsForUser(userId: AuthUserId): AuthSession[];
-  revokeSession(id: AuthSessionId, revokedAt: Date): AuthSession | undefined;
-  saveMagicLinkRequest(request: MagicLinkRequest): MagicLinkRequest;
+  ): AuthAccount | undefined | Promise<AuthAccount | undefined>;
+  listAccountsForUser(userId: AuthUserId): AuthAccount[] | Promise<AuthAccount[]>;
+  saveSession(session: AuthSession): AuthSession | Promise<AuthSession>;
+  findSessionById(id: AuthSessionId): AuthSession | undefined | Promise<AuthSession | undefined>;
+  findSessionByTokenHash?(tokenHash: string): AuthSession | undefined | Promise<AuthSession | undefined>;
+  listSessionsForUser(userId: AuthUserId): AuthSession[] | Promise<AuthSession[]>;
+  revokeSession(
+    id: AuthSessionId,
+    revokedAt: Date,
+  ): AuthSession | undefined | Promise<AuthSession | undefined>;
+  saveMagicLinkRequest(request: MagicLinkRequest): MagicLinkRequest | Promise<MagicLinkRequest>;
   findMagicLinkRequestById(
     id: MagicLinkRequestId,
-  ): MagicLinkRequest | undefined;
+  ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
   findMagicLinkRequestByTokenHash(
     tokenHash: MagicLinkTokenHash,
-  ): MagicLinkRequest | undefined;
-  listMagicLinkRequestsForEmail(email: string): MagicLinkRequest[];
+  ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
+  claimMagicLinkRequest(
+    tokenHash: MagicLinkTokenHash,
+    claimedAt: Date,
+  ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
+  listMagicLinkRequestsForEmail(email: string): MagicLinkRequest[] | Promise<MagicLinkRequest[]>;
   updateMagicLinkRequestStatus(
     id: MagicLinkRequestId,
     status: MagicLinkRequestStatus,
     changedAt: Date,
-  ): MagicLinkRequest | undefined;
+  ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
 }
 
 export class InMemoryAuthRepository implements AuthRepository {
@@ -188,6 +196,29 @@ export class InMemoryAuthRepository implements AuthRepository {
     );
 
     return request ? cloneMagicLinkRequest(request) : undefined;
+  }
+
+  claimMagicLinkRequest(
+    tokenHash: MagicLinkTokenHash,
+    claimedAt: Date,
+  ): MagicLinkRequest | undefined {
+    const request = Array.from(this.magicLinkRequests.values()).find(
+      (candidate) => candidate.tokenHash === tokenHash,
+    );
+
+    if (!request || request.status !== "requested" || request.expiresAt <= claimedAt) {
+      return undefined;
+    }
+
+    const claimed: MagicLinkRequest = {
+      ...request,
+      status: "consumed",
+      consumedAt: claimedAt,
+    };
+
+    this.magicLinkRequests.set(claimed.id, cloneMagicLinkRequest(claimed));
+
+    return cloneMagicLinkRequest(claimed);
   }
 
   listMagicLinkRequestsForEmail(email: string): MagicLinkRequest[] {
