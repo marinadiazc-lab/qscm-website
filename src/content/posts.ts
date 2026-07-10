@@ -77,7 +77,7 @@ function formatDate(date: Date) {
 }
 
 function isRemoteReference(src: string) {
-  return src.startsWith("http://") || src.startsWith("https://") || src.startsWith("#");
+  return src.startsWith("http://") || src.startsWith("https://");
 }
 
 function validateLocalMediaReference(src: string, sourcePath: string) {

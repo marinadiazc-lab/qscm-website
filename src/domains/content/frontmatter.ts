@@ -12,7 +12,6 @@ const localOrRemoteReferenceSchema = z
   .refine(
     (value) =>
       value.startsWith("/") ||
-      value.startsWith("#") ||
       value.startsWith("http://") ||
       value.startsWith("https://"),
     "Use an absolute local path like /media/file.png or an http(s) URL.",
