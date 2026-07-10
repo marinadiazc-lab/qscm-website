@@ -68,7 +68,7 @@ Magic-link requests have a lifecycle status of `requested`, `consumed`, `expired
 
 The stored token is a SHA-256 hash, not the raw emailed token. `/api/auth/magic-link` creates an expiring request. `/api/auth/magic-link/consume` first claims the token through the repository contract by atomically moving the matching row from `requested` to `consumed` before any user or session is created. If the claim fails, no session is minted. After a successful claim, the route creates or finds a reader user, links the `email_magic_link` account, creates a durable session, stores the session id on the consumed request, and sets the HTTP-only `qscm_session` cookie.
 
-Real email delivery is deliberately not implemented here. The route returns the same safe response whether delivery is available or not. M06 should connect `deliverMagicLink` to the transactional `EmailProvider`/Resend send-intent flow.
+Magic-link email delivery uses the transactional `EmailProvider`/Resend send-intent flow when `RESEND_API_KEY`, `RESEND_DEFAULT_FROM`, and database configuration are available. The route still returns the same safe response whether delivery is queued, skipped as a duplicate, unavailable, or failed.
 
 ## Route guards
 

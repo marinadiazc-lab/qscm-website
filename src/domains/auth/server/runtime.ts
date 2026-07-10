@@ -2,7 +2,11 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import { siteName } from "@/src/content/site";
+import { getSiteUrl, siteName } from "@/src/content/site";
+import { db } from "@/src/db";
+import { EmailProviderConfigurationError, EmailSendService, createResendEmailProviderFromEnv } from "@/src/domains/email";
+import { DrizzleEmailSendIntentRepository } from "@/src/domains/email/repository";
+import { getDefaultPublicationId } from "@/src/domains/subscribers/runtime";
 import { DrizzleAuthRepository } from "../drizzle-repository";
 import type { AuthAccount, AuthRepository, AuthSession, AuthUser } from "../index";
 import {
@@ -17,14 +21,11 @@ import {
   normalizeAuthEmail,
   sessionExpiresAt,
 } from "../index";
+import { deliverMagicLinkEmail, type MagicLinkDeliveryResult } from "../magic-link-email";
 
 export type AuthRuntime = {
   repository: AuthRepository;
 };
-
-export type MagicLinkDeliveryResult =
-  | { status: "queued"; provider: string }
-  | { status: "not_configured"; message: string };
 
 export type RequestMagicLinkResult = {
   delivery: MagicLinkDeliveryResult;
@@ -119,6 +120,8 @@ export async function requestMagicLink(input: {
       email,
       magicLinkUrl,
       requestId: request.id,
+      requestedAt: request.requestedAt,
+      expiresAt: request.expiresAt,
     }),
   };
 }
@@ -257,13 +260,52 @@ async function deliverMagicLink(input: {
   email: string;
   magicLinkUrl: string;
   requestId: string;
+  requestedAt: Date;
+  expiresAt: Date;
 }): Promise<MagicLinkDeliveryResult> {
-  void input;
+  if (!hasTransactionalEmailConfig()) {
+    return {
+      status: "not_configured",
+      message: `${siteName} created a magic-link request, but transactional email delivery is not configured for this environment.`,
+    };
+  }
 
-  return {
-    status: "not_configured",
-    message: `${siteName} created a magic-link request, but transactional email delivery is not wired yet.`,
-  };
+  try {
+    return await deliverMagicLinkEmail({
+      email: input.email,
+      magicLinkUrl: input.magicLinkUrl,
+      requestId: input.requestId,
+      publicationId: await getDefaultPublicationId(),
+      siteName,
+      siteUrl: getSiteUrl(),
+      requestedAt: input.requestedAt,
+      expiresAt: input.expiresAt,
+      sendService: createMagicLinkSendService(),
+    });
+  } catch (error) {
+    if (error instanceof EmailProviderConfigurationError) {
+      return {
+        status: "not_configured",
+        message: error.message,
+      };
+    }
+
+    return {
+      status: "failed",
+      message: error instanceof Error ? error.message : "Magic-link email delivery failed.",
+    };
+  }
+}
+
+function createMagicLinkSendService() {
+  return new EmailSendService(
+    new DrizzleEmailSendIntentRepository(db),
+    createResendEmailProviderFromEnv(),
+  );
+}
+
+function hasTransactionalEmailConfig(env: NodeJS.ProcessEnv = process.env) {
+  return Boolean(env.RESEND_API_KEY?.trim() && env.RESEND_DEFAULT_FROM?.trim());
 }
 
 function sanitizeRedirect(redirectTo?: string): string | undefined {

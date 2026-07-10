@@ -1,5 +1,6 @@
 export * from "./drizzle-repository";
 export * from "./guards";
+export * from "./magic-link-email";
 export * from "./protected";
 export * from "./providers/config";
 export * from "./repository";
