@@ -48,13 +48,17 @@ export function EmailCapture() {
   return (
     <section className="wire-panel" aria-label="Email signup">
       <h2>Start with email</h2>
-      <p>
-        This will become the magic-link entry point and free subscriber signup.
-      </p>
-      <form className="form-row">
-        <input name="email" placeholder="you@example.com" type="email" />
-        <button className="button" type="button">
-          Continue
+      <form action="/api/subscribers/signup" className="form-row" method="post">
+        <input name="source" type="hidden" value="subscribe_page" />
+        <input
+          aria-label="Email address"
+          name="email"
+          placeholder="you@example.com"
+          required
+          type="email"
+        />
+        <button className="button" type="submit">
+          Join free
         </button>
       </form>
     </section>

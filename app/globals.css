@@ -282,8 +282,11 @@ a {
 
 .notice {
   margin: 0;
+  border: 1px solid #5c8a66;
   border-radius: 6px;
   padding: 12px 14px;
+  background: #eef7f0;
+  color: #25452c;
   font-weight: 700;
 }
 
@@ -293,7 +296,8 @@ a {
   color: #225434;
 }
 
-.notice.error {
+.notice.error,
+.notice-error {
   border: 1px solid #d9a0a0;
   background: #fff0f0;
   color: #7a2323;
@@ -417,6 +421,72 @@ a {
 .form-grid label {
   display: grid;
   gap: 8px;
+}
+
+.form-row input,
+.form-row select,
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  min-height: 42px;
+  border: 1px solid #b7b7ae;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.form-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.form-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.danger-row {
+  color: #6f2719;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid #deded8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.csv-preview {
+  overflow-x: auto;
+  margin: 0;
+  border: 1px solid #deded8;
+  border-radius: 6px;
+  padding: 12px;
+  background: #f8f8f6;
 }
 
 .form-row,

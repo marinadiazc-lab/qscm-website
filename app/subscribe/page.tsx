@@ -9,17 +9,37 @@ export const metadata: Metadata = {
   description: "Subscribe to QSCM.",
 };
 
-export default function SubscribePage() {
+type SubscribePageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function SubscribePage({ searchParams }: SubscribePageProps) {
+  const params = (await searchParams) ?? {};
+  const subscribed = params.subscribed;
+  const error = params.error;
+
   return (
     <main className="page stack">
       <header className="hero">
         <p className="badge">Subscribe</p>
         <h1 className="page-title">Choose a subscription path</h1>
         <p className="lede">
-          This page will connect magic-link auth, Resend, and Stripe tiers. For
-          now it shows the intended paths without taking payment.
+          Join the free list now. Paid tier checkout will attach to the same
+          subscriber record when billing is ready.
         </p>
       </header>
+      {subscribed ? (
+        <p className="notice" role="status">
+          {subscribed === "already"
+            ? "You are already on the list, and your preferences are ready."
+            : "You are on the free list. Welcome in."}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="notice notice-error" role="alert">
+          {String(error)}
+        </p>
+      ) : null}
       <EmailCapture />
       <SubscriptionOptions />
     </main>
