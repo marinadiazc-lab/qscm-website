@@ -334,10 +334,14 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const response = this.client.broadcasts?.send
-      ? await this.client.broadcasts.send(input.broadcastId, {
-        })
-      : { data: { id: input.broadcastId } };
+    if (!this.client.broadcasts?.send) {
+      throw new EmailProviderError(
+        "Resend broadcast sending is unavailable in the installed Resend client; no broadcast was sent.",
+        this.key,
+      );
+    }
+
+    const response = await this.client.broadcasts.send(input.broadcastId);
 
     if (response?.error) {
       throw resendError("send broadcast", response.error);

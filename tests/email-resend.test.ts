@@ -203,6 +203,57 @@ describe("Resend provider", () => {
       }),
     ).rejects.toThrow(/Scheduled Resend broadcast orchestration is not implemented/);
   });
+
+  it("sends broadcasts through Resend when broadcast send is available", async () => {
+    const send = vi.fn().mockResolvedValue({ data: { id: "broadcast_1" } });
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        now: () => now,
+        client: {
+          emails: { send: vi.fn() },
+          broadcasts: { create: vi.fn(), send },
+        },
+      },
+    );
+
+    const result = await provider.sendBroadcast({
+      intent: intent(),
+      broadcastId: "broadcast_1",
+    });
+
+    expect(send).toHaveBeenCalledWith("broadcast_1");
+    expect(result).toMatchObject({
+      accepted: true,
+      providerBroadcastId: "broadcast_1",
+      status: "sent",
+    });
+  });
+
+  it("rejects broadcast sends when the Resend client does not expose broadcast send", async () => {
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+          broadcasts: { create: vi.fn() },
+        },
+      },
+    );
+
+    await expect(
+      provider.sendBroadcast({
+        intent: intent(),
+        broadcastId: "broadcast_1",
+      }),
+    ).rejects.toThrow(/broadcast sending is unavailable/i);
+  });
 });
 
 describe("email send service", () => {
