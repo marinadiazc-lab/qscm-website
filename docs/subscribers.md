@@ -1,6 +1,6 @@
 # Subscribers
 
-Status: M05 foundation implemented  
+Status: M05 foundation implemented
 Date: 2026-07-10
 
 ## Scope
