@@ -166,6 +166,82 @@ describe("Resend provider", () => {
     ).rejects.toThrow(/Segment membership is not implemented/i);
   });
 
+  it("creates audiences through Resend when audience creation is available", async () => {
+    const create = vi.fn().mockResolvedValue({ data: { id: "audience_1" } });
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        now: () => now,
+        client: {
+          emails: { send: vi.fn() },
+          audiences: { create },
+        },
+      },
+    );
+
+    const audience = await provider.upsertAudience({
+      publicationId: "pub_1",
+      key: "weekly",
+      name: "Weekly readers",
+    });
+
+    expect(create).toHaveBeenCalledWith({ name: "Weekly readers" });
+    expect(audience).toMatchObject({
+      id: "audience_1",
+      providerAudienceId: "audience_1",
+      key: "weekly",
+      name: "Weekly readers",
+    });
+  });
+
+  it("rejects audience creation when the Resend client cannot create audiences", async () => {
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+        },
+      },
+    );
+
+    await expect(
+      provider.upsertAudience({
+        publicationId: "pub_1",
+        key: "weekly",
+        name: "Weekly readers",
+      }),
+    ).rejects.toThrow(/audience creation is unavailable/i);
+  });
+
+  it("rejects segment upserts instead of fabricating a Resend segment", async () => {
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+        },
+      },
+    );
+
+    await expect(
+      provider.upsertSegment({
+        publicationId: "pub_1",
+        audienceId: "audience_1",
+        key: "paid",
+        name: "Paid readers",
+      }),
+    ).rejects.toThrow(/segment upsert is not implemented/i);
+  });
+
   it("creates draft broadcasts and rejects incomplete scheduled orchestration", async () => {
     const create = vi.fn().mockResolvedValue({ data: { id: "broadcast_1" } });
     const provider = new ResendEmailProvider(

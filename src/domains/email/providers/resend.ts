@@ -166,45 +166,46 @@ export class ResendEmailProvider implements EmailProvider {
 
   async upsertAudience(input: UpsertEmailAudienceInput): Promise<EmailAudience> {
     const providerAudienceId = input.providerAudienceId ?? input.id;
-    const response = providerAudienceId
-      ? undefined
-      : await this.client.audiences?.create({ name: input.name });
+    const audiences = this.client.audiences;
+    let providerCreatedAudienceId: string | undefined;
 
-    if (response?.error) {
-      throw resendError("create audience", response.error);
+    if (!providerAudienceId) {
+      if (!audiences?.create) {
+        throw new EmailProviderError(
+          "Resend audience creation is unavailable in the installed Resend client; no audience was created.",
+          this.key,
+        );
+      }
+
+      const response = await audiences.create({ name: input.name });
+
+      if (response.error) {
+        throw resendError("create audience", response.error);
+      }
+
+      providerCreatedAudienceId = response.data?.id;
     }
 
     const now = this.now();
     return {
-      id: input.id ?? response?.data?.id ?? input.key,
+      id: input.id ?? providerCreatedAudienceId ?? input.key,
       provider: this.key,
       publicationId: input.publicationId,
       key: input.key,
       name: input.name,
       description: input.description,
       status: input.status ?? "active",
-      providerAudienceId: providerAudienceId ?? response?.data?.id,
+      providerAudienceId: providerAudienceId ?? providerCreatedAudienceId,
       createdAt: now,
       updatedAt: now,
     };
   }
 
-  async upsertSegment(input: UpsertEmailSegmentInput): Promise<EmailSegment> {
-    const now = this.now();
-    return {
-      id: input.id ?? input.providerSegmentId ?? input.key,
-      provider: this.key,
-      publicationId: input.publicationId,
-      audienceId: input.audienceId,
-      key: input.key,
-      name: input.name,
-      description: input.description,
-      status: input.status ?? "active",
-      definition: input.definition,
-      providerSegmentId: input.providerSegmentId ?? input.id,
-      createdAt: now,
-      updatedAt: now,
-    };
+  async upsertSegment(_input: UpsertEmailSegmentInput): Promise<EmailSegment> {
+    throw new EmailProviderError(
+      "Resend segment upsert is not implemented by this adapter; no segment was created or updated.",
+      this.key,
+    );
   }
 
   async addContactToAudience(
