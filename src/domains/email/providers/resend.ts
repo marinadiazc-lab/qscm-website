@@ -292,7 +292,14 @@ export class ResendEmailProvider implements EmailProvider {
       throw new EmailProviderError("Resend broadcasts require a segment or audience target.", this.key);
     }
 
-    const response = await this.client.broadcasts?.create({
+    if (!this.client.broadcasts?.create) {
+      throw new EmailProviderError(
+        "Resend broadcast creation is unavailable in the installed Resend client; no broadcast draft was created.",
+        this.key,
+      );
+    }
+
+    const response = await this.client.broadcasts.create({
       segmentId,
       from: formatAddress(input.from ?? this.config.defaultFrom),
       replyTo: input.replyTo

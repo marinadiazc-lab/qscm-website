@@ -309,6 +309,28 @@ describe("Resend provider", () => {
     });
   });
 
+  it("rejects draft broadcast creation when the Resend client does not expose broadcast create", async () => {
+    const provider = new ResendEmailProvider(
+      {
+        apiKey: "re_test",
+        defaultFrom: { email: "hello@example.com" },
+      },
+      {
+        client: {
+          emails: { send: vi.fn() },
+        },
+      },
+    );
+
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { segmentIds: ["segment_1"] },
+      }),
+    ).rejects.toThrow(/broadcast creation is unavailable/i);
+  });
+
   it("rejects broadcast sends when the Resend client does not expose broadcast send", async () => {
     const provider = new ResendEmailProvider(
       {
