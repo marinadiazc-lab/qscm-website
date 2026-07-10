@@ -1,4 +1,4 @@
-# Email Provider Skeleton
+# Email Provider
 
 The email domain starts with provider-neutral TypeScript contracts in
 `src/domains/email`. App code should depend on `EmailProvider`, not on a Resend
@@ -6,33 +6,98 @@ client directly.
 
 ## Resend Default
 
-Resend is the planned first real provider for transactional email and
-newsletter or broadcast delivery. The current `ResendEmailProvider` only
-validates required configuration (`apiKey` and `defaultFrom.email`) and then
-throws explicit not-configured errors for every API operation. This keeps the
-repo buildable while preventing accidental network calls or real sends before
-the adapter is implemented.
+Resend is the first real provider for transactional email and newsletter or
+broadcast delivery. `ResendEmailProvider` wraps the official SDK behind the
+app-owned boundary so tests can inject in-memory providers or mocked Resend
+clients.
+
+Required production environment:
+
+- `RESEND_API_KEY`
+- `RESEND_DEFAULT_FROM`, for example `QSCM <hello@example.com>`
+- `RESEND_DEFAULT_REPLY_TO` when replies should route somewhere else
+- `RESEND_DEFAULT_AUDIENCE_ID` when contact upserts do not pass an audience id
+- `RESEND_WEBHOOK_SECRET` for webhook verification at the route layer
+
+`createResendEmailProviderFromEnv` refuses to create a live SDK client when
+`NODE_ENV=test` unless a mock client is injected or `RESEND_ALLOW_TEST_SENDS=true`
+is set. Unit tests should not send live email.
 
 The app remains the source of truth for subscribers, entitlement state, audience
-membership, and send ownership. Resend should receive synced contact and segment
-state from the app; it should not become the place where product access is
-decided.
+membership, and send ownership. Resend receives synced contact and segment state
+from the app; it should not become the place where product access is decided.
 
 ## Duplicate Send Prevention
 
-Every future transactional or broadcast send should be created from a local
-`send_intent` record before it reaches a provider. The intent should carry:
+Every transactional or broadcast send should be created from a local send intent
+before it reaches a provider. `EmailSendService` reserves the intent, calls the
+provider once, stores the provider message id, and records skipped duplicates as
+delivery logs without changing the original terminal intent row. Server code can import
+`src/domains/email/repository.ts` directly for `DrizzleEmailSendIntentRepository`,
+which uses the database unique index on `(publication_id, dedupe_key)` and a
+conditional reservation update so concurrent workers cannot reserve the same
+logical send twice.
 
-- a stable `dedupeKey` for the logical send
-- an intent status such as `pending`, `reserved`, `sending`, `sent`, `failed`,
-  `suppressed`, or `skipped_duplicate`
-- provider identifiers once a send is accepted
+Database tables `email_send_intents`, `email_broadcasts`, `email_delivery_logs`,
+and `email_provider_events` persist the foundation for production workflows.
 
-The eventual database-backed flow should reserve one intent per dedupe key,
-send only from the reserved intent, and mark later attempts as
-`skipped_duplicate`. The in-memory provider already mirrors that behavior for
-tests and development examples, but the durable guarantee should live in the
-app database.
+## Templates
+
+`src/domains/email/templates.ts` contains app-owned transactional templates for:
+
+- magic-link sign in
+- receipts
+- subscription updates
+- comment notifications
+- share-by-email
+- MDX post newsletters
+
+Each template returns plain text and HTML. The newsletter template includes
+Resend's unsubscribe placeholder for provider-managed broadcast unsubscribe
+links.
+
+## Broadcasts From MDX
+
+Posts can opt into broadcast generation through frontmatter:
+
+```yaml
+newsletter:
+  enabled: true
+  subject: "Optional email subject"
+  previewText: "Optional inbox preview"
+  audience: "free_subscribers"
+```
+
+This is the only shared content-type/frontmatter addition made for the M06 email
+work. It is intentionally optional so access-control branches can merge without
+changing post visibility behavior.
+
+`createNewsletterBroadcastFromPost` converts a published post into a
+`CreateEmailBroadcastInput`. Audience targeting starts from post visibility:
+`public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
+posts map tier ids to configured segment ids.
+
+The Resend adapter currently creates draft broadcasts only. Scheduled broadcast
+orchestration remains in #50 so the implementation can match the provider
+contract end to end instead of passing incomplete scheduling fields.
+
+## Provider Events
+
+Resend webhooks should be verified with the raw request body and the Svix
+headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
+`EmailProviderEventProcessor` dedupes provider event ids only for the lifetime
+of the process. Durable webhook idempotency must persist `email_provider_events`
+before #52 can close. The in-process processor maps:
+
+- `contact.unsubscribed` to local `unsubscribed`
+- `email.bounced` to local `bounced`
+- `email.complained` to local `complained`
+- `email.suppressed` to local `suppressed`
+
+Delivery events are recorded through the delivery-log foundation for later M12
+admin dashboards.
+
+## Sending Domain And DNS
 
 ## Post Sharing By Email
 
@@ -50,10 +115,16 @@ Email-share dedupe keys and local share context must not include the raw
 recipient email address. Use a normalized email hash in identifiers and reserve
 the raw recipient address only for the provider `to` field at send time.
 
-## Future Kit Adapter
+## Sending Domain And DNS
 
-Kit can be added later as another `EmailProvider` implementation if creator CRM
-or automation features become more important. Kit-specific concepts should stay
-inside that adapter. The domain types should continue to speak in app-owned
-terms: subscribers, contacts, audiences, segments, broadcasts, transactional
-sends, and send intents.
+Resend requires a verified sending domain before production sends. In the
+dashboard, add the sending domain and copy the generated DNS records exactly to
+the DNS host. Resend documents DKIM/SPF configuration through `TXT` and `MX`
+records, with verification often completing within about 15 minutes but
+occasionally taking up to 72 hours. Add DMARC after the domain verifies.
+
+External access is still required to verify the real production domain in the
+Resend dashboard and DNS provider. Issue #47 should remain open until those
+records are configured and Resend reports the domain verified.
+
+## Future Kit Adapter

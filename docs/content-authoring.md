@@ -56,10 +56,24 @@ Write the post here.
 | `canonicalUrl` | No |  | Optional canonical URL if the canonical version lives elsewhere. |
 | `coverImage` | No |  | Optional `{ src, alt, caption }` image shown above the post body. |
 | `seo` | No | `{}` | Optional `title`, `description`, `canonicalUrl`, and `image` overrides for metadata. |
+| `newsletter` | No |  | Optional email-broadcast metadata for posts that should create a newsletter broadcast. |
 | `media` | No | `[]` | Optional list of media references used by the post. Image entries require `alt`. |
 
 Invalid frontmatter fails the build with the source file and field names. Slugs
 must use lowercase letters, numbers, and hyphens.
+
+Optional newsletter metadata is intentionally narrow and does not change content
+access rules:
+
+```mdx
+newsletter:
+  enabled: true
+  subject: "Optional email subject"
+  previewText: "Optional inbox preview"
+  audience: "free_subscribers"
+```
+
+When omitted or disabled, no broadcast is created from the post.
 
 ## Visibility
 

@@ -66,6 +66,30 @@ export const providerSyncStatusEnum = pgEnum("provider_sync_status", [
   "failed",
   "disabled",
 ]);
+export const emailSendKindEnum = pgEnum("email_send_kind", ["transactional", "broadcast"]);
+export const emailSendIntentStatusEnum = pgEnum("email_send_intent_status", [
+  "pending",
+  "reserved",
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "canceled",
+  "suppressed",
+  "skipped_duplicate",
+]);
+export const emailBroadcastStatusEnum = pgEnum("email_broadcast_status", [
+  "draft",
+  "scheduled",
+  "sending",
+  "sent",
+  "canceled",
+]);
+export const emailDeliveryLogLevelEnum = pgEnum("email_delivery_log_level", [
+  "info",
+  "warning",
+  "error",
+]);
 export const tierStatusEnum = pgEnum("tier_status", ["active", "archived"]);
 export const billingIntervalEnum = pgEnum("billing_interval", ["month", "year"]);
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
@@ -384,6 +408,138 @@ export const subscriberProviderSyncs = pgTable(
       table.provider,
       table.providerContactId,
     ),
+  }),
+);
+
+export const emailBroadcasts = pgTable(
+  "email_broadcasts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => publications.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    key: text("key"),
+    status: emailBroadcastStatusEnum("status").notNull().default("draft"),
+    providerBroadcastId: text("provider_broadcast_id"),
+    subject: text("subject").notNull(),
+    previewText: text("preview_text"),
+    html: text("html"),
+    text: text("text"),
+    target: jsonb("target").$type<Record<string, unknown>>().notNull().default({}),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    publicationKeyUnique: uniqueIndex("email_broadcasts_publication_key_unique")
+      .on(table.publicationId, table.key)
+      .where(sql`${table.key} is not null`),
+    providerBroadcastIdx: index("email_broadcasts_provider_broadcast_idx").on(
+      table.provider,
+      table.providerBroadcastId,
+    ),
+    statusIdx: index("email_broadcasts_status_idx").on(table.publicationId, table.status),
+  }),
+);
+
+export const emailSendIntents = pgTable(
+  "email_send_intents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => publications.id, { onDelete: "cascade" }),
+    kind: emailSendKindEnum("kind").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    status: emailSendIntentStatusEnum("status").notNull().default("pending"),
+    provider: text("provider"),
+    recipientEmail: text("recipient_email"),
+    subscriberId: uuid("subscriber_id").references(() => subscribers.id, {
+      onDelete: "set null",
+    }),
+    broadcastId: uuid("broadcast_id").references(() => emailBroadcasts.id, {
+      onDelete: "set null",
+    }),
+    providerMessageId: text("provider_message_id"),
+    providerBroadcastId: text("provider_broadcast_id"),
+    errorMessage: text("error_message"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (table) => ({
+    dedupeUnique: uniqueIndex("email_send_intents_dedupe_unique").on(
+      table.publicationId,
+      table.dedupeKey,
+    ),
+    subscriberIdx: index("email_send_intents_subscriber_idx").on(table.subscriberId),
+    broadcastIdx: index("email_send_intents_broadcast_idx").on(table.broadcastId),
+    providerMessageIdx: index("email_send_intents_provider_message_idx").on(
+      table.provider,
+      table.providerMessageId,
+    ),
+  }),
+);
+
+export const emailDeliveryLogs = pgTable(
+  "email_delivery_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publicationId: uuid("publication_id").references(() => publications.id, {
+      onDelete: "set null",
+    }),
+    intentId: uuid("intent_id").references(() => emailSendIntents.id, {
+      onDelete: "set null",
+    }),
+    broadcastId: uuid("broadcast_id").references(() => emailBroadcasts.id, {
+      onDelete: "set null",
+    }),
+    subscriberId: uuid("subscriber_id").references(() => subscribers.id, {
+      onDelete: "set null",
+    }),
+    recipientEmail: text("recipient_email"),
+    provider: text("provider"),
+    providerMessageId: text("provider_message_id"),
+    eventType: text("event_type").notNull(),
+    level: emailDeliveryLogLevelEnum("level").notNull().default("info"),
+    message: text("message"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    intentIdx: index("email_delivery_logs_intent_idx").on(table.intentId),
+    subscriberIdx: index("email_delivery_logs_subscriber_idx").on(table.subscriberId),
+    providerMessageIdx: index("email_delivery_logs_provider_message_idx").on(
+      table.provider,
+      table.providerMessageId,
+    ),
+    createdAtIdx: index("email_delivery_logs_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const emailProviderEvents = pgTable(
+  "email_provider_events",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    eventType: text("event_type").notNull(),
+    providerMessageId: text("provider_message_id"),
+    recipientEmail: text("recipient_email"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    providerMessageIdx: index("email_provider_events_provider_message_idx").on(
+      table.provider,
+      table.providerMessageId,
+    ),
+    eventTypeIdx: index("email_provider_events_type_idx").on(table.provider, table.eventType),
   }),
 );
 
@@ -905,6 +1061,9 @@ export const auditLogs = pgTable(
 export type Publication = typeof publications.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
+export type EmailBroadcastRecord = typeof emailBroadcasts.$inferSelect;
+export type EmailSendIntentRecord = typeof emailSendIntents.$inferSelect;
+export type EmailDeliveryLogRecord = typeof emailDeliveryLogs.$inferSelect;
 export type SubscriptionTier = typeof subscriptionTiers.$inferSelect;
 export type TierPrice = typeof tierPrices.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;

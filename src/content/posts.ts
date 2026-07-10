@@ -13,6 +13,7 @@ import {
   type PostMetadataIndex,
   type PostMetadataIndexEntry,
   type PostPublicationState,
+  type PostNewsletterOptions,
   type PostVisibility,
   type PublicationId,
 } from "@/src/domains/content";
@@ -41,6 +42,7 @@ export type PostSummary = {
   canonicalUrl?: string;
   coverImage?: ContentImage;
   seo: ContentSeo;
+  newsletter?: PostNewsletterOptions;
   media: ContentMediaReference[];
 };
 
@@ -174,6 +176,7 @@ function readPost(fileName: string, now = new Date()): Post {
     canonicalUrl: frontmatter.canonicalUrl,
     coverImage: frontmatter.coverImage,
     seo: frontmatter.seo,
+    newsletter: metadata.newsletter,
     media: metadata.media,
     body: parsed.content,
     sourcePath: fullPath,

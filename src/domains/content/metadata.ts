@@ -29,6 +29,7 @@ export function createPostMetadataIndexEntry(
     canonicalUrl: frontmatter.canonicalUrl,
     coverImage: frontmatter.coverImage,
     seo: frontmatter.seo,
+    newsletter: frontmatter.newsletter,
     media: [...frontmatter.media],
   };
 }
