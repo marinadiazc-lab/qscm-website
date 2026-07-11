@@ -286,11 +286,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const segmentId = input.target.segmentIds?.[0] ?? input.target.audienceIds?.[0];
-
-    if (!segmentId) {
-      throw new EmailProviderError("Resend broadcasts require a segment or audience target.", this.key);
-    }
+    const segmentId = singleBroadcastTargetId(input.target);
 
     if (!this.client.broadcasts?.create) {
       throw new EmailProviderError(
@@ -434,6 +430,24 @@ function parseAddressEnv(value: string | undefined): EmailAddressWithName {
   }
 
   return { email: value.trim() };
+}
+
+function singleBroadcastTargetId(target: CreateEmailBroadcastInput["target"]) {
+  const segmentIds = target.segmentIds ?? [];
+  const unsupportedDirectTargets = [
+    ...(target.audienceIds ?? []),
+    ...(target.subscriberIds ?? []),
+    ...(target.excludeSubscriberIds ?? []),
+  ];
+
+  if (segmentIds.length !== 1 || unsupportedDirectTargets.length > 0) {
+    throw new EmailProviderError(
+      "Resend broadcasts require exactly one segment target. Configure a broadcast segment that matches the intended audience.",
+      "resend",
+    );
+  }
+
+  return segmentIds[0]!;
 }
 
 function toResendTags(tags: string[] | undefined, metadata: Record<string, unknown> | undefined) {

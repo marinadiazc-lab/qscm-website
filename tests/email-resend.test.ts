@@ -277,6 +277,20 @@ describe("Resend provider", () => {
       provider.createBroadcast({
         publicationId: "pub_1",
         content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { segmentIds: ["segment_1", "segment_2"] },
+      }),
+    ).rejects.toThrow(/exactly one segment target/);
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { audienceIds: ["audience_1"] },
+      }),
+    ).rejects.toThrow(/exactly one segment target/);
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
         target: { segmentIds: ["segment_1"] },
         scheduledAt: new Date("2026-07-11T12:00:00.000Z"),
       }),
@@ -480,17 +494,17 @@ describe("newsletter broadcasts", () => {
       siteName: "QSCM",
       siteUrl: "https://qscm.example",
       defaultPublicationId: "pub_1",
-      audienceIds: {
-        public: "aud_public",
-        free_subscribers: "aud_free",
-        paid_any: "aud_paid",
+      broadcastSegmentIds: {
+        public: "seg_public",
+        free_subscribers: "seg_free_access",
+        paid_any: "seg_paid",
       },
     });
 
     expect(broadcast).toMatchObject({
       publicationId: "pub_1",
       key: "post:welcome",
-      target: { audienceIds: ["aud_free", "aud_paid"] },
+      target: { segmentIds: ["seg_free_access"] },
       content: { subject: "A note for subscribers" },
     });
     expect(broadcast?.content.html).toContain("RESEND_UNSUBSCRIBE_URL");
@@ -560,10 +574,10 @@ describe("newsletter broadcasts", () => {
       siteName: "QSCM",
       siteUrl: "https://qscm.example",
       defaultPublicationId: "pub_1",
-      audienceIds: {
-        public: "aud_public",
-        free_subscribers: "aud_free",
-        paid_any: "aud_paid",
+      broadcastSegmentIds: {
+        public: "seg_public",
+        free_subscribers: "seg_free_access",
+        paid_any: "seg_paid",
       },
     });
 

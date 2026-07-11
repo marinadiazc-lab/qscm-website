@@ -20,7 +20,7 @@ export type NewsletterBroadcastOptions = {
   siteName: string;
   siteUrl: string;
   defaultPublicationId: string;
-  audienceIds?: Record<"public" | "free_subscribers" | "paid_any", string>;
+  broadcastSegmentIds?: Partial<Record<Exclude<NewsletterAudience, "specific_tiers">, string>>;
   tierSegmentIds?: Record<string, string>;
 };
 
@@ -73,9 +73,7 @@ function targetForPost(
     };
   }
 
-  const audienceIds = audienceIdsForAudience(audience, options);
-
-  return audienceIds.length > 0 ? { audienceIds } : { segmentIds: segmentKeysForAudience(audience) };
+  return { segmentIds: [options.broadcastSegmentIds?.[audience] ?? audience] };
 }
 
 function resolveNewsletterAudience(post: PostSummary): NewsletterAudience {
@@ -105,31 +103,6 @@ function accessRank(audience: NewsletterAudience) {
     case "specific_tiers":
       return 3;
   }
-}
-
-function audienceIdsForAudience(
-  audience: Exclude<NewsletterAudience, "specific_tiers">,
-  options: NewsletterBroadcastOptions,
-) {
-  const ids = options.audienceIds;
-
-  if (!ids) {
-    return [];
-  }
-
-  if (audience === "free_subscribers") {
-    return unique([ids.free_subscribers, ids.paid_any].filter(Boolean));
-  }
-
-  return ids[audience] ? [ids[audience]] : [];
-}
-
-function segmentKeysForAudience(audience: Exclude<NewsletterAudience, "specific_tiers">) {
-  if (audience === "free_subscribers") {
-    return ["free_subscribers", "paid_any"];
-  }
-
-  return [audience];
 }
 
 export interface EmailBroadcastRepository {
@@ -314,10 +287,6 @@ function compactMetadata(metadata: EmailMetadata) {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== null),
   ) as EmailMetadata;
-}
-
-function unique(values: string[]) {
-  return Array.from(new Set(values));
 }
 
 function cloneBroadcast(broadcast: EmailBroadcast): EmailBroadcast {

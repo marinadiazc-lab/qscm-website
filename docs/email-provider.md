@@ -30,6 +30,8 @@ Required production environment:
 - `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`,
   `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`, and
   `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID` for subscriber contact sync
+- Resend broadcast segment ids for each newsletter audience, including a free
+  access segment that contains both free and paid subscribers
 - `RESEND_WEBHOOK_SECRET` for webhook verification at the route layer
 
 `createResendEmailProviderFromEnv` refuses to create a live SDK client when
@@ -93,9 +95,10 @@ changing post visibility behavior.
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
 posts map tier ids to configured segment ids, falling back to stable
 `tier:<tierId>` segment keys when provider ids are not configured. Free
-subscriber posts target both free and paid subscriber audiences when both are
-configured, matching the server access rule that paid subscribers can read free
-subscriber content.
+subscriber posts target one configured broadcast segment that must include both
+free and paid subscribers, matching the server access rule that paid
+subscribers can read free subscriber content. The Resend adapter rejects
+multi-target draft creation instead of silently sending only the first segment.
 
 `EmailBroadcastService` owns the app pipeline: it creates or reuses the local
 `email_broadcasts` row, creates the provider draft, stores the provider
