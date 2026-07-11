@@ -31,7 +31,7 @@ export default async function AdminDashboardPage() {
 
   const [metrics, logs] = await Promise.all([
     getDashboardMetrics(publication.id),
-    listOperationalLogs(),
+    listOperationalLogs(publication.id),
   ]);
 
   return (

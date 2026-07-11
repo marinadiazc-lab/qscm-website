@@ -244,7 +244,7 @@ export async function listAdminSubscribers(input: {
           })
           .from(schema.subscriberProviderSyncs)
           .where(eq(schema.subscriberProviderSyncs.subscriberId, row.id)),
-        countRows(schema.comments, eq(schema.comments.authorEmail, row.email)),
+        countSubscriberComments(input.publicationId, row.email),
         db
           .select({
             status: schema.subscriptions.status,
@@ -456,14 +456,21 @@ export async function listAdminPodcastShows(
   );
 }
 
-export async function listOperationalLogs(): Promise<AdminOperationalLogRow[]> {
+export async function listOperationalLogs(
+  publicationId: string,
+): Promise<AdminOperationalLogRow[]> {
   const [webhooks, audits] = await Promise.all([
     db
       .select()
       .from(schema.webhookEventLogs)
       .orderBy(desc(schema.webhookEventLogs.receivedAt))
       .limit(25),
-    db.select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.createdAt)).limit(25),
+    db
+      .select()
+      .from(schema.auditLogs)
+      .where(eq(schema.auditLogs.publicationId, publicationId))
+      .orderBy(desc(schema.auditLogs.createdAt))
+      .limit(25),
   ]);
 
   return [
@@ -532,6 +539,24 @@ async function countPendingComments(publicationId: string): Promise<number> {
       and(
         eq(schema.postMetadata.publicationId, publicationId),
         eq(schema.comments.moderationStatus, "suspicious"),
+      ),
+    );
+
+  return row?.value ?? 0;
+}
+
+async function countSubscriberComments(
+  publicationId: string,
+  authorEmail: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(schema.comments)
+    .innerJoin(schema.postMetadata, eq(schema.comments.postId, schema.postMetadata.id))
+    .where(
+      and(
+        eq(schema.postMetadata.publicationId, publicationId),
+        eq(schema.comments.authorEmail, authorEmail),
       ),
     );
 

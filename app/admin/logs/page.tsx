@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
 
 import {
+  AdminEmptyState,
   AdminPageHeader,
   DisabledAdminButton,
   OperationalLogTable,
 } from "../_components";
-import { listOperationalLogs } from "@/src/domains/admin/dashboard";
+import {
+  getAdminPublication,
+  listOperationalLogs,
+} from "@/src/domains/admin/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +19,21 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminLogsPage() {
-  const logs = await listOperationalLogs();
+  const publication = await getAdminPublication();
+
+  if (!publication) {
+    return (
+      <div className="stack">
+        <AdminPageHeader
+          title="Operational Logs"
+          description="Webhook and audit log inspection with redacted details for admin review."
+        />
+        <AdminEmptyState>Run the database seed before using operational tools.</AdminEmptyState>
+      </div>
+    );
+  }
+
+  const logs = await listOperationalLogs(publication.id);
 
   return (
     <div className="stack">
