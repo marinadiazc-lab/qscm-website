@@ -214,7 +214,10 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
       .where(
         and(
           eq(schema.subscriberProviderSyncs.provider, provider),
-          eq(schema.subscriberProviderSyncs.syncStatus, "pending"),
+          or(
+            eq(schema.subscriberProviderSyncs.syncStatus, "pending"),
+            eq(schema.subscriberProviderSyncs.syncStatus, "failed"),
+          ),
         ),
       )
       .orderBy(schema.subscriberProviderSyncs.updatedAt)

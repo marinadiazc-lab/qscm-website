@@ -110,7 +110,11 @@ export class InMemorySubscriberRepository {
 
   listPendingProviderSyncs(provider: string, limit = 50): SubscriberProviderSync[] {
     return Array.from(this.syncs.values())
-      .filter((sync) => sync.provider === provider && sync.syncStatus === "pending")
+      .filter(
+        (sync) =>
+          sync.provider === provider &&
+          (sync.syncStatus === "pending" || sync.syncStatus === "failed"),
+      )
       .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
       .slice(0, limit)
       .map(cloneSync);

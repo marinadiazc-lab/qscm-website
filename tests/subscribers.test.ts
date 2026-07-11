@@ -326,6 +326,51 @@ describe("Resend subscriber sync worker", () => {
     });
   });
 
+  it("retries failed provider sync rows", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber()],
+      syncs: [
+        sync({
+          syncStatus: "failed",
+          lastError: "provider unavailable",
+          updatedAt: new Date("2026-07-10T11:59:00.000Z"),
+        }),
+      ],
+    });
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact(input) {
+          return {
+            id: "contact_1",
+            provider: "resend",
+            publicationId: input.publicationId,
+            subscriberId: input.subscriberId,
+            email: input.email,
+            status: input.status ?? "active",
+            audienceIds: input.audienceIds ?? [],
+            segmentIds: [],
+            fields: {},
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+      },
+      { now: () => now },
+    );
+
+    await expect(worker.runPending()).resolves.toEqual({
+      processed: 1,
+      synced: 1,
+      failed: 0,
+    });
+    expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
+      syncStatus: "synced",
+      lastSyncedAt: now,
+      lastError: undefined,
+    });
+  });
+
   it("sends suppressed provider status when local preferences opt out", async () => {
     const repository = new InMemorySubscriberRepository({
       subscribers: [subscriber({ status: "active" })],
