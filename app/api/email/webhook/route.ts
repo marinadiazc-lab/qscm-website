@@ -19,10 +19,11 @@ export async function POST(request: Request) {
   const rawBody = await request.text();
 
   try {
+    const svixId = request.headers.get("svix-id") ?? undefined;
     verifyResendWebhookSignature(
       rawBody,
       {
-        "svix-id": request.headers.get("svix-id") ?? undefined,
+        "svix-id": svixId,
         "svix-timestamp": request.headers.get("svix-timestamp") ?? undefined,
         "svix-signature": request.headers.get("svix-signature") ?? undefined,
       },
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     );
 
     const payload = JSON.parse(rawBody) as Record<string, unknown>;
-    const event = parseResendWebhookEvent(payload);
+    const event = parseResendWebhookEvent(payload, { eventId: svixId });
     const emailRepository = new DrizzleEmailSendIntentRepository();
     const subscriberRepository = new DatabaseSubscriberRepository();
     const subscriberService = new SubscriberService(subscriberRepository);

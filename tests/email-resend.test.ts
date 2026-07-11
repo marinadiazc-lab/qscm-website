@@ -634,6 +634,32 @@ describe("provider events", () => {
     );
   });
 
+  it("uses Svix delivery ids and documented object tags for Resend webhook correlation", () => {
+    const event = parseResendWebhookEvent(
+      {
+        type: "email.delivered",
+        created_at: now.toISOString(),
+        data: {
+          email_id: "email_delivered",
+          to: ["reader@example.com"],
+          broadcast_id: "broadcast_from_data",
+          tags: {
+            subscriberId: "sub_1",
+          },
+        },
+      },
+      { eventId: "msg_svix_1" },
+    );
+
+    expect(event).toMatchObject({
+      id: "msg_svix_1",
+      providerMessageId: "email_delivered",
+      recipientEmail: "reader@example.com",
+      subscriberId: "sub_1",
+      broadcastId: "broadcast_from_data",
+    });
+  });
+
   it("verifies Resend webhook signatures using raw-body Svix semantics", () => {
     const rawBody = JSON.stringify({ id: "evt_1", type: "email.delivered" });
     const secret = "whsec_" + Buffer.from("test_secret").toString("base64");

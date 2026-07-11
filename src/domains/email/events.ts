@@ -112,15 +112,23 @@ export class EmailProviderWebhookHandler {
   }
 }
 
-export function parseResendWebhookEvent(payload: Record<string, unknown>): EmailProviderEvent {
+export function parseResendWebhookEvent(
+  payload: Record<string, unknown>,
+  options: { eventId?: string } = {},
+): EmailProviderEvent {
   const data = isRecord(payload.data) ? payload.data : {};
   const email = isRecord(data.email) ? data.email : data;
-  const createdAt = typeof payload.created_at === "string" ? payload.created_at : undefined;
+  const createdAt =
+    typeof payload.created_at === "string"
+      ? payload.created_at
+      : typeof data.created_at === "string"
+        ? data.created_at
+        : undefined;
   const rawType = String(payload.type ?? "unknown");
   const metadata = collectMetadata(payload, data, email);
 
   return {
-    id: String(payload.id ?? fallbackEventId(rawType, payload, data, email)),
+    id: String(options.eventId ?? payload.id ?? fallbackEventId(rawType, payload, data, email)),
     provider: "resend" as EmailProviderKey,
     type: rawType,
     createdAt: createdAt ? new Date(createdAt) : new Date(),
@@ -205,15 +213,29 @@ function collectMetadata(
 
   return {
     subscriberId: stringValue(
-      metadata.subscriberId ?? metadata.subscriber_id ?? metadata.qscm_subscriber_id,
+      metadata.subscriberId ??
+        metadata.subscriber_id ??
+        metadata.qscm_subscriber_id ??
+        email.subscriber_id ??
+        data.subscriber_id,
     ),
     broadcastId: stringValue(
-      metadata.broadcastId ?? metadata.broadcast_id ?? metadata.qscm_broadcast_id,
+      metadata.broadcastId ??
+        metadata.broadcast_id ??
+        metadata.qscm_broadcast_id ??
+        email.broadcast_id ??
+        email.broadcastId ??
+        data.broadcast_id ??
+        data.broadcastId,
     ),
   };
 }
 
 function tagsToMetadata(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) {
+    return value;
+  }
+
   if (!Array.isArray(value)) {
     return {};
   }
