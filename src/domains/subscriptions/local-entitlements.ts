@@ -39,7 +39,7 @@ export interface LocalEntitlementGrantState {
   accessEndsAt: Date | null;
 }
 
-export interface LocalEntitlementMergeOptions extends EntitlementPolicy {}
+export type LocalEntitlementMergeOptions = EntitlementPolicy;
 
 export function selectLocalEntitlementGrantState(
   rows: readonly LocalEntitlementGrantRow[],
