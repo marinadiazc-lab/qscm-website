@@ -14,10 +14,6 @@ export type ResendSubscriberSyncConfig = {
   paidAudienceId?: string;
   suppressedAudienceId?: string;
   tierAudienceIds?: Record<string, string>;
-  freeSegmentId?: string;
-  paidSegmentId?: string;
-  suppressedSegmentId?: string;
-  tierSegmentIds?: Record<string, string>;
   now?: () => Date;
 };
 
@@ -79,6 +75,7 @@ export class ResendSubscriberSyncWorker {
 
       const preferences = await this.repository.findPreferences(subscriber.id);
       const target = mapSubscriberSyncTarget(subscriber, preferences, this.config);
+      const audienceIds = target.audienceIds.slice(0, 1);
       const contact = await this.emailProvider.upsertContact({
         publicationId: subscriber.publicationId,
         subscriberId: subscriber.id,
@@ -87,17 +84,7 @@ export class ResendSubscriberSyncWorker {
         email: subscriber.email,
         name: stringMetadata(subscriber.metadata, "name"),
         status: subscriber.status,
-        audienceIds: target.audienceIds,
-        segmentIds: target.segmentIds,
-        fields: {
-          source: subscriber.source ?? "",
-          status: subscriber.status,
-          marketingEmailOptIn: preferences?.marketingEmailOptIn ?? true,
-          productEmailOptIn: preferences?.productEmailOptIn ?? true,
-          commentNotificationOptIn: preferences?.commentNotificationOptIn ?? true,
-          subscriberTier: target.tier ?? "",
-          paidSubscriber: target.paid,
-        },
+        ...(audienceIds.length > 0 ? { audienceIds } : {}),
       });
 
       await this.repository.saveProviderSync({
@@ -108,8 +95,7 @@ export class ResendSubscriberSyncWorker {
         lastError: undefined,
         metadata: {
           ...sync.metadata,
-          audienceIds: target.audienceIds,
-          segmentIds: target.segmentIds,
+          audienceIds: contact.audienceIds,
           syncedReason: sync.metadata.pendingReason,
         },
         updatedAt: now,
@@ -145,15 +131,9 @@ export function mapSubscriberSyncTarget(
     paid ? config.paidAudienceId : config.freeAudienceId,
     tier ? config.tierAudienceIds?.[tier] : undefined,
   ].filter(Boolean) as string[];
-  const segmentIds = [
-    suppressed ? config.suppressedSegmentId : undefined,
-    paid ? config.paidSegmentId : config.freeSegmentId,
-    tier ? config.tierSegmentIds?.[tier] : undefined,
-  ].filter(Boolean) as string[];
 
   return {
     audienceIds,
-    segmentIds,
     suppressed,
     paid,
     tier,
@@ -172,9 +152,6 @@ export async function createResendSubscriberSyncWorkerFromEnv(
       freeAudienceId: env.RESEND_FREE_SUBSCRIBER_AUDIENCE_ID ?? env.RESEND_DEFAULT_AUDIENCE_ID,
       paidAudienceId: env.RESEND_PAID_SUBSCRIBER_AUDIENCE_ID,
       suppressedAudienceId: env.RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID,
-      freeSegmentId: env.RESEND_FREE_SUBSCRIBER_SEGMENT_ID,
-      paidSegmentId: env.RESEND_PAID_SUBSCRIBER_SEGMENT_ID,
-      suppressedSegmentId: env.RESEND_SUPPRESSED_SUBSCRIBER_SEGMENT_ID,
     },
   );
 }

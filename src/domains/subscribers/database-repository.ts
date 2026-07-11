@@ -16,10 +16,14 @@ import type {
 } from "./types";
 import { normalizeSubscriberEmail } from "./service";
 
+type SubscriberDbClient = Pick<typeof db, "insert" | "select">;
+
 export class DatabaseSubscriberRepository implements SubscriberRepository {
+  constructor(private readonly client: SubscriberDbClient = db) {}
+
   async saveSubscriber(subscriber: SubscriberRecord): Promise<SubscriberRecord> {
     try {
-      const [stored] = await db
+      const [stored] = await this.client
         .insert(schema.subscribers)
         .values(toSubscriberRow(subscriber))
         .onConflictDoUpdate({
@@ -48,7 +52,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async findSubscriberById(id: string): Promise<SubscriberRecord | undefined> {
-    const [row] = await db
+    const [row] = await this.client
       .select()
       .from(schema.subscribers)
       .where(eq(schema.subscribers.id, id))
@@ -61,7 +65,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
     publicationId: string,
     email: string,
   ): Promise<SubscriberRecord | undefined> {
-    const [row] = await db
+    const [row] = await this.client
       .select()
       .from(schema.subscribers)
       .where(
@@ -87,7 +91,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
           )
         : undefined,
     );
-    const rows = await db
+    const rows = await this.client
       .select()
       .from(schema.subscribers)
       .where(where)
@@ -107,7 +111,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async savePreferences(preferences: SubscriberPreferences): Promise<SubscriberPreferences> {
-    const [stored] = await db
+    const [stored] = await this.client
       .insert(schema.subscriberPreferences)
       .values({
         subscriberId: preferences.subscriberId,
@@ -133,7 +137,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async findPreferences(subscriberId: string): Promise<SubscriberPreferences | undefined> {
-    const [row] = await db
+    const [row] = await this.client
       .select()
       .from(schema.subscriberPreferences)
       .where(eq(schema.subscriberPreferences.subscriberId, subscriberId))
@@ -143,7 +147,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async saveProviderSync(syncRecord: SubscriberProviderSync): Promise<SubscriberProviderSync> {
-    const [stored] = await db
+    const [stored] = await this.client
       .insert(schema.subscriberProviderSyncs)
       .values({
         id: syncRecord.id,
@@ -180,7 +184,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
     subscriberId: string,
     provider: string,
   ): Promise<SubscriberProviderSync | undefined> {
-    const [row] = await db
+    const [row] = await this.client
       .select()
       .from(schema.subscriberProviderSyncs)
       .where(
@@ -195,7 +199,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async listProviderSyncs(subscriberId: string): Promise<SubscriberProviderSync[]> {
-    const rows = await db
+    const rows = await this.client
       .select()
       .from(schema.subscriberProviderSyncs)
       .where(eq(schema.subscriberProviderSyncs.subscriberId, subscriberId));
@@ -204,7 +208,7 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
   }
 
   async listPendingProviderSyncs(provider: string, limit = 50): Promise<SubscriberProviderSync[]> {
-    const rows = await db
+    const rows = await this.client
       .select()
       .from(schema.subscriberProviderSyncs)
       .where(

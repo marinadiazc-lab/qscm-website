@@ -30,9 +30,6 @@ Required production environment:
 - `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`,
   `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`, and
   `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID` for subscriber contact sync
-- optional `RESEND_FREE_SUBSCRIBER_SEGMENT_ID`,
-  `RESEND_PAID_SUBSCRIBER_SEGMENT_ID`, and
-  `RESEND_SUPPRESSED_SUBSCRIBER_SEGMENT_ID` for subscriber segment targeting
 - `RESEND_WEBHOOK_SECRET` for webhook verification at the route layer
 
 `createResendEmailProviderFromEnv` refuses to create a live SDK client when
@@ -40,11 +37,11 @@ Required production environment:
 is set. Unit tests should not send live email.
 
 The app remains the source of truth for subscribers, entitlement state, audience
-membership, and send ownership. Resend receives synced contact and segment state
-from the app; it should not become the place where product access is decided.
-`ResendSubscriberSyncWorker` consumes pending `subscriber_provider_syncs` rows
-and calls the provider boundary with injected credentials or a mock provider in
-tests.
+membership, and send ownership. Resend receives contact upserts into one
+selected audience; segment and custom-field sync are not treated as successful
+unless the provider adapter performs those operations. `ResendSubscriberSyncWorker`
+consumes pending `subscriber_provider_syncs` rows and calls the provider
+boundary with injected credentials or a mock provider in tests.
 
 ## Duplicate Send Prevention
 

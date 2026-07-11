@@ -202,7 +202,7 @@ describe("subscriber health states and admin operations", () => {
 });
 
 describe("Resend subscriber sync worker", () => {
-  it("syncs pending rows into configured Resend audiences and marks them synced", async () => {
+  it("syncs pending rows into the selected Resend audience and marks actual provider state synced", async () => {
     const repository = new InMemorySubscriberRepository({
       subscribers: [subscriber({ metadata: { name: "Reader", tierSlug: "founding" } })],
       preferences: [preferences()],
@@ -221,8 +221,8 @@ describe("Resend subscriber sync worker", () => {
             subscriberId: input.subscriberId,
             email: input.email,
             status: input.status ?? "active",
-            audienceIds: input.audienceIds ?? [],
-            segmentIds: input.segmentIds ?? [],
+            audienceIds: input.audienceIds?.slice(0, 1) ?? [],
+            segmentIds: [],
             fields: input.fields ?? {},
             createdAt: now,
             updatedAt: now,
@@ -232,8 +232,6 @@ describe("Resend subscriber sync worker", () => {
       {
         paidAudienceId: "aud_paid",
         tierAudienceIds: { founding: "aud_founding" },
-        paidSegmentId: "seg_paid",
-        tierSegmentIds: { founding: "seg_founding" },
         now: () => now,
       },
     );
@@ -246,19 +244,24 @@ describe("Resend subscriber sync worker", () => {
     expect(contacts[0]).toMatchObject({
       email: "reader@example.com",
       name: "Reader",
-      audienceIds: ["aud_paid", "aud_founding"],
-      segmentIds: ["seg_paid", "seg_founding"],
-      fields: {
-        subscriberTier: "founding",
-        paidSubscriber: true,
-      },
+      audienceIds: ["aud_paid"],
     });
+    expect(contacts[0]).not.toHaveProperty("segmentIds");
+    expect(contacts[0]).not.toHaveProperty("fields");
     expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
       providerContactId: "contact_1",
       syncStatus: "synced",
       lastSyncedAt: now,
       lastError: undefined,
+      metadata: {
+        pendingReason: "signup",
+        audienceIds: ["aud_paid"],
+        syncedReason: "signup",
+      },
     });
+    expect(repository.findProviderSync("sub_1", "resend")?.metadata).not.toHaveProperty(
+      "segmentIds",
+    );
   });
 
   it("marks failed provider calls without requiring live Resend credentials", async () => {

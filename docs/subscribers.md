@@ -43,8 +43,8 @@ Implemented surfaces:
   metadata and queue a provider sync.
 - Preference and status changes write `subscriber_provider_syncs` with
   `provider = resend` and `sync_status = pending`. `ResendSubscriberSyncWorker`
-  consumes pending rows, mirrors app-owned subscriber state into Resend contact
-  fields/audiences/segments, and marks rows `synced` or `failed`.
+  consumes pending rows, mirrors app-owned subscriber status into a Resend
+  contact in one selected audience, and marks rows `synced` or `failed`.
 
 ## CSV Import
 
@@ -75,20 +75,19 @@ use a mock provider without live Resend credentials. Production code can create
 the worker with `createResendSubscriberSyncWorkerFromEnv`, which uses the
 database repository and `createResendEmailProviderFromEnv`.
 
-Audience and segment mapping is configured with:
+Audience mapping is configured with:
 
 - `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`
 - `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`
 - `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID`
-- `RESEND_FREE_SUBSCRIBER_SEGMENT_ID`
-- `RESEND_PAID_SUBSCRIBER_SEGMENT_ID`
-- `RESEND_SUPPRESSED_SUBSCRIBER_SEGMENT_ID`
 
 Suppressed app states (`unsubscribed`, `bounced`, `complained`, `suppressed`)
-and local opt-outs are reflected in the contact sync payload. Paid/tier mapping
-comes from subscriber metadata (`paidSubscriber`, `tier`, `tierSlug`, or
-`subscriptionTier`) until the broader entitlement projection feeds this worker
-directly.
+and local opt-outs are reflected in the contact sync payload. Paid/tier
+metadata (`paidSubscriber`, `tier`, `tierSlug`, or `subscriptionTier`) chooses
+the first configured audience that the Resend contact upsert can send today.
+The worker records provider-confirmed contact/audience ids only; segment and
+custom-field success should not be inferred until the Resend adapter sends
+those operations.
 
 ## Follow-Ups
 

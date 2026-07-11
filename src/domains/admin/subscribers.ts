@@ -59,27 +59,32 @@ export async function importAdminSubscribers(input: {
   csv: string;
 }) {
   const publication = await requireAdminPublication();
-  const service = new SubscriberService(new DatabaseSubscriberRepository());
-  const result = await service.importRows(publication.id, parseSubscriberCsv(input.csv));
 
-  await recordSubscriberOperationAudit({
-    publicationId: publication.id,
-    actor: input.actor,
-    operation: "subscriber_import",
-    counts: {
-      imported: result.imported,
-      updated: result.updated,
-      skipped: result.skipped,
-      failed: result.errors.length,
-    },
-    failures: result.errors.map((error) => ({
-      row: error.row,
-      code: error.code,
-      message: error.message,
-    })),
+  return db.transaction(async (tx) => {
+    const service = new SubscriberService(new DatabaseSubscriberRepository(tx));
+    const result = await service.importRows(publication.id, parseSubscriberCsv(input.csv));
+
+    await tx.insert(schema.auditLogs).values(
+      buildSubscriberOperationAuditValues({
+        publicationId: publication.id,
+        actor: input.actor,
+        operation: "subscriber_import",
+        counts: {
+          imported: result.imported,
+          updated: result.updated,
+          skipped: result.skipped,
+          failed: result.errors.length,
+        },
+        failures: result.errors.map((error) => ({
+          row: error.row,
+          code: error.code,
+          message: error.message,
+        })),
+      }),
+    );
+
+    return result;
   });
-
-  return result;
 }
 
 export async function recordSubscriberOperationAudit(input: {
