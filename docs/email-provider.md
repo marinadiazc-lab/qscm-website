@@ -91,11 +91,23 @@ changing post visibility behavior.
 `createNewsletterBroadcastFromPost` converts a published post into a
 `CreateEmailBroadcastInput`. Audience targeting starts from post visibility:
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
-posts map tier ids to configured segment ids.
+posts map tier ids to configured segment ids, falling back to stable
+`tier:<tierId>` segment keys when provider ids are not configured. Free
+subscriber posts target both free and paid subscriber audiences when both are
+configured, matching the server access rule that paid subscribers can read free
+subscriber content.
 
-The Resend adapter currently creates draft broadcasts only. Scheduled broadcast
-orchestration remains in #50 so the implementation can match the provider
-contract end to end instead of passing incomplete scheduling fields.
+`EmailBroadcastService` owns the app pipeline: it creates or reuses the local
+`email_broadcasts` row, creates the provider draft, stores the provider
+broadcast id on the local row, and sends through `EmailSendService` so a durable
+`email_send_intents` row records the send attempt. Local broadcast ids remain
+the app source of truth; provider ids are stored as external references for
+Resend operations.
+
+The Resend adapter currently creates draft broadcasts and sends existing
+provider drafts immediately. Scheduled broadcast orchestration remains a future
+workflow so the implementation can match the provider contract end to end
+instead of passing incomplete scheduling fields.
 
 ## Provider Events
 

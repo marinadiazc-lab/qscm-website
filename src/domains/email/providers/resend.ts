@@ -349,7 +349,8 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const response = await this.client.broadcasts.send(input.broadcastId);
+    const providerBroadcastId = input.providerBroadcastId ?? input.broadcastId;
+    const response = await this.client.broadcasts.send(providerBroadcastId);
 
     if (response?.error) {
       throw resendError("send broadcast", response.error);
@@ -362,7 +363,7 @@ export class ResendEmailProvider implements EmailProvider {
       status: "sent",
       accepted: true,
       broadcastId: input.broadcastId,
-      providerBroadcastId: response?.data?.id ?? input.broadcastId,
+      providerBroadcastId: response?.data?.id ?? providerBroadcastId,
       sentAt: this.now(),
     };
   }

@@ -3,10 +3,13 @@ import {
   buildMagicLinkEmail,
   buildReceiptEmail,
   buildSubscriptionUpdateEmail,
+  EmailBroadcastService,
   createNewsletterBroadcastFromPost,
   createResendEmailProviderFromEnv,
   EmailProviderEventProcessor,
   EmailSendService,
+  InMemoryEmailBroadcastRepository,
+  InMemoryEmailProvider,
   InMemoryEmailSendIntentRepository,
   parseResendWebhookEvent,
   ResendEmailProvider,
@@ -443,8 +446,7 @@ describe("email send service", () => {
 });
 
 describe("newsletter broadcasts", () => {
-  it("creates an email-ready broadcast from post newsletter metadata", () => {
-    const post: PostSummary = {
+  const post = (overrides: Partial<PostSummary> = {}): PostSummary => ({
       slug: "welcome",
       title: "Welcome",
       excerpt: "The first note.",
@@ -470,9 +472,11 @@ describe("newsletter broadcasts", () => {
         enabled: true,
         subject: "A note for subscribers",
       },
-    };
+      ...overrides,
+  });
 
-    const broadcast = createNewsletterBroadcastFromPost(post, {
+  it("creates an email-ready broadcast from post newsletter metadata", () => {
+    const broadcast = createNewsletterBroadcastFromPost(post(), {
       siteName: "QSCM",
       siteUrl: "https://qscm.example",
       defaultPublicationId: "pub_1",
@@ -486,10 +490,115 @@ describe("newsletter broadcasts", () => {
     expect(broadcast).toMatchObject({
       publicationId: "pub_1",
       key: "post:welcome",
-      target: { audienceIds: ["aud_free"] },
+      target: { audienceIds: ["aud_free", "aud_paid"] },
       content: { subject: "A note for subscribers" },
     });
     expect(broadcast?.content.html).toContain("RESEND_UNSUBSCRIBE_URL");
+  });
+
+  it("blocks newsletter audience metadata from widening post access", () => {
+    expect(() =>
+      createNewsletterBroadcastFromPost(
+        post({
+          visibility: "paid_any",
+          accessRequirement: {
+            visibility: "paid_any",
+            rule: "paid_subscription",
+            requiresAuthentication: true,
+            requiresPaidSubscription: true,
+            allowedTierIds: [],
+          },
+          newsletter: {
+            enabled: true,
+            audience: "public",
+          },
+        }),
+        {
+          siteName: "QSCM",
+          siteUrl: "https://qscm.example",
+          defaultPublicationId: "pub_1",
+        },
+      ),
+    ).toThrow(/broader than post visibility/);
+  });
+
+  it("maps tier-restricted posts to tier segment targets", () => {
+    const broadcast = createNewsletterBroadcastFromPost(
+      post({
+        visibility: "specific_tiers",
+        accessRequirement: {
+          visibility: "specific_tiers",
+          rule: "specific_tiers",
+          requiresAuthentication: true,
+          requiresPaidSubscription: true,
+          allowedTierIds: ["founding"],
+        },
+        tierIds: ["founding"],
+      }),
+      {
+        siteName: "QSCM",
+        siteUrl: "https://qscm.example",
+        defaultPublicationId: "pub_1",
+      },
+    );
+
+    expect(broadcast?.target).toEqual({ segmentIds: ["tier:founding"] });
+  });
+
+  it("persists local broadcast and send records around provider calls", async () => {
+    const broadcastRepository = new InMemoryEmailBroadcastRepository(() => now);
+    const sendIntentRepository = new InMemoryEmailSendIntentRepository(() => now);
+    const provider = new InMemoryEmailProvider(() => now);
+    const sendService = new EmailSendService(sendIntentRepository, provider);
+    const broadcastService = new EmailBroadcastService(
+      broadcastRepository,
+      provider,
+      sendService,
+    );
+
+    const draft = await broadcastService.createDraftFromPost(post(), {
+      siteName: "QSCM",
+      siteUrl: "https://qscm.example",
+      defaultPublicationId: "pub_1",
+      audienceIds: {
+        public: "aud_public",
+        free_subscribers: "aud_free",
+        paid_any: "aud_paid",
+      },
+    });
+
+    expect(draft).toMatchObject({
+      publicationId: "pub_1",
+      provider: "in_memory",
+      status: "draft",
+      providerBroadcastId: expect.any(String),
+    });
+
+    const result = await broadcastService.sendBroadcast({
+      publicationId: "pub_1",
+      broadcastId: draft!.id,
+      dedupeKey: "broadcast:welcome:send",
+    });
+
+    expect(result).toMatchObject({
+      accepted: true,
+      broadcastId: draft!.id,
+      status: "sent",
+    });
+    expect(await broadcastRepository.listBroadcasts({ publicationId: "pub_1" })).toMatchObject([
+      {
+        id: draft!.id,
+        status: "sent",
+        providerBroadcastId: expect.any(String),
+      },
+    ]);
+    expect(await sendIntentRepository.listIntents({ broadcastId: draft!.id })).toMatchObject([
+      {
+        kind: "broadcast",
+        status: "sent",
+        providerBroadcastId: expect.any(String),
+      },
+    ]);
   });
 });
 
