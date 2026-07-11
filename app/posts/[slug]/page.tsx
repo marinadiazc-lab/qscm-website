@@ -59,7 +59,6 @@ export default async function PostPage({ params }: PostPageProps) {
     notFound();
   }
 
-  const viewer = await getPostAccessViewerForRequest();
   const accessDecision =
     preview && post.publicationState !== "published"
       ? {
@@ -69,9 +68,13 @@ export default async function PostPage({ params }: PostPageProps) {
           checkedAt: new Date(),
           lock: null,
         } satisfies PostAccessDecision
+      : post.accessRequirement.rule === "public"
+        ? evaluatePostAccess({
+            requirement: post.accessRequirement,
+          })
       : evaluatePostAccess({
           requirement: post.accessRequirement,
-          viewer,
+          viewer: await getPostAccessViewerForRequest(),
         });
   const accessibleBody = getAccessiblePostBody(post.body, accessDecision);
 
