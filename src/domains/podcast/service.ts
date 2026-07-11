@@ -19,7 +19,10 @@ import type {
 import { buildPodcastRssFeed } from "./feed";
 
 export interface PodcastRepository {
-  findShowBySlug(slug: string): PodcastShow | undefined | Promise<PodcastShow | undefined>;
+  findShowBySlug(
+    slug: string,
+    publicationId?: string,
+  ): PodcastShow | undefined | Promise<PodcastShow | undefined>;
   listPublishedEpisodesForShow(
     showId: string,
     now: Date,
@@ -242,13 +245,12 @@ export async function buildPrivatePodcastFeed(
 ): Promise<BuildPrivateFeedResult> {
   const generatedAt = input.generatedAt ?? new Date();
   const tokenHash = hashPrivateFeedToken(input.rawToken);
-  const [show, token] = await Promise.all([
-    input.repository.findShowBySlug(input.showSlug),
-    input.repository.findTokenByHash(tokenHash),
-  ]);
+  const token = await input.repository.findTokenByHash(tokenHash);
+  const show = await input.repository.findShowBySlug(input.showSlug, token?.publicationId);
 
   if (!show) {
     await recordDeniedFeedProbe(input.repository, {
+      publicationId: token?.publicationId,
       tokenHash,
       showSlug: input.showSlug,
       tokenId: token?.id,
@@ -278,6 +280,7 @@ export async function buildPrivatePodcastFeed(
 
   if (!token) {
     await recordDeniedFeedProbe(input.repository, {
+      publicationId: show.publicationId,
       tokenHash,
       showSlug: input.showSlug,
       showId: show.id,

@@ -19,11 +19,21 @@ import type { PodcastRepository } from "./service";
 export class DrizzlePodcastRepository implements PodcastRepository {
   constructor(private readonly db: DbClient) {}
 
-  async findShowBySlug(slug: string): Promise<PodcastShow | undefined> {
+  async findShowBySlug(
+    slug: string,
+    publicationId?: string,
+  ): Promise<PodcastShow | undefined> {
     const [row] = await this.db
       .select()
       .from(schema.podcastShows)
-      .where(eq(schema.podcastShows.slug, slug))
+      .where(
+        publicationId
+          ? and(
+              eq(schema.podcastShows.slug, slug),
+              eq(schema.podcastShows.publicationId, publicationId),
+            )
+          : eq(schema.podcastShows.slug, slug),
+      )
       .limit(1);
 
     return row ? showFromRow(row) : undefined;
@@ -101,12 +111,14 @@ export class DrizzlePodcastRepository implements PodcastRepository {
 
   async recordDeniedFeedProbe(probe: PrivateFeedDeniedProbe): Promise<void> {
     await this.db.insert(schema.auditLogs).values({
+      publicationId: probe.publicationId,
       action: "podcast.private_feed_denied",
       subjectType: probe.tokenId ? "private_feed_token" : "private_feed_token_hash",
       subjectId: probe.tokenId ?? probe.tokenHash,
       sensitivity: "security",
       metadata: toJsonObject({
         tokenHash: probe.tokenHash,
+        publicationId: probe.publicationId,
         showSlug: probe.showSlug,
         showId: probe.showId,
         reason: probe.reason,
@@ -149,7 +161,7 @@ function showFromRow(row: typeof schema.podcastShows.$inferSelect): PodcastShow 
     authorName: row.authorName ?? undefined,
     owner: row.owner ? (row.owner as unknown as PodcastOwnerContact) : undefined,
     explicit: row.explicit,
-    defaultAccessRule: row.defaultAccessRule as unknown as PodcastAccessRule,
+    defaultAccessRule: accessRuleFromJson(row.defaultAccessRule),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     publishedAt: row.publishedAt ?? undefined,
@@ -166,7 +178,7 @@ function episodeFromRow(row: typeof schema.podcastEpisodes.$inferSelect): Podcas
     description: row.description,
     status: row.status,
     visibility: row.visibility,
-    accessRule: row.accessRule ? (row.accessRule as unknown as PodcastAccessRule) : undefined,
+    accessRule: row.accessRule ? accessRuleFromJson(row.accessRule) : undefined,
     enclosure: row.enclosure as unknown as PodcastMediaEnclosure,
     seasonNumber: row.seasonNumber ?? undefined,
     episodeNumber: row.episodeNumber ?? undefined,
@@ -236,4 +248,26 @@ function toJsonObject<T extends object>(
   value: T | null | undefined,
 ): Record<string, unknown> | undefined {
   return value ? ({ ...value } as Record<string, unknown>) : undefined;
+}
+
+function accessRuleFromJson(value: unknown): PodcastAccessRule {
+  const input = value as PodcastAccessRule & {
+    startsAt?: Date | string | number | null;
+    endsAt?: Date | string | number | null;
+  };
+
+  return {
+    ...input,
+    startsAt: dateFromJson(input.startsAt),
+    endsAt: dateFromJson(input.endsAt),
+  };
+}
+
+function dateFromJson(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value instanceof Date) {
+    return value ?? undefined;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }

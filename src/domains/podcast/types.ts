@@ -126,6 +126,7 @@ export interface PrivateFeedTokenAuditEvent {
 }
 
 export interface PrivateFeedDeniedProbe {
+  publicationId?: string;
   tokenHash: PrivateFeedTokenHash;
   showSlug: string;
   tokenId?: PrivateFeedTokenId;

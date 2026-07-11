@@ -365,10 +365,46 @@ describe("private feed token service", () => {
       reason: "token_not_found",
     });
     expect(repository.deniedProbes.at(-1)).toMatchObject({
+      publicationId: "pub_1",
       showSlug: "main",
       showId: "show_1",
       reason: "token_not_found",
       tokenHash: hashPrivateFeedToken("not-a-real-token"),
+    });
+  });
+
+  it("scopes show lookup to the token publication when slugs overlap", async () => {
+    const repository = new InMemoryPodcastRepository({
+      shows: [
+        show({
+          id: "show_other",
+          publicationId: "pub_other",
+          defaultAccessRule: { kind: "private_token" },
+        }),
+        show({ defaultAccessRule: { kind: "private_token" } }),
+      ],
+      episodes: [episode()],
+    });
+    const issued = await issuePrivateFeedToken({
+      repository,
+      publicationId: "pub_1",
+      show: show(),
+      now,
+    });
+    const result = await buildPrivatePodcastFeed({
+      repository,
+      showSlug: "main",
+      rawToken: issued.rawToken,
+      generatedAt: now,
+    });
+
+    expect(result).toMatchObject({
+      allowed: true,
+      status: 200,
+      show: {
+        id: "show_1",
+        publicationId: "pub_1",
+      },
     });
   });
 
@@ -420,19 +456,21 @@ describe("private feed token service", () => {
 class InMemoryPodcastRepository implements PodcastRepository {
   readonly auditEvents: PrivateFeedTokenAuditEvent[] = [];
   readonly deniedProbes: PrivateFeedDeniedProbe[] = [];
-  private readonly shows = new Map<string, PodcastShow>();
+  private readonly shows: PodcastShow[] = [];
   private readonly episodes = new Map<string, PodcastEpisode[]>();
   private readonly tokens = new Map<string, PrivateFeedToken>();
 
   constructor(seed: { shows?: PodcastShow[]; episodes?: PodcastEpisode[] } = {}) {
-    seed.shows?.forEach((item) => this.shows.set(item.slug, item));
+    this.shows.push(...(seed.shows ?? []));
     seed.episodes?.forEach((item) => {
       this.episodes.set(item.showId, [...(this.episodes.get(item.showId) ?? []), item]);
     });
   }
 
-  findShowBySlug(slug: string) {
-    return this.shows.get(slug);
+  findShowBySlug(slug: string, publicationId?: string) {
+    return this.shows.find(
+      (item) => item.slug === slug && (!publicationId || item.publicationId === publicationId),
+    );
   }
 
   listPublishedEpisodesForShow(showId: string, checkedAt: Date) {
