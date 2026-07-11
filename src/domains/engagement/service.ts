@@ -15,12 +15,17 @@ import type {
   CommentSubmissionInput,
   CommentSubmissionResult,
   EngagementActor,
+  EngagementRequestContext,
   EngagementSummary,
   LikePostInput,
   LikePostResult,
   SharePostByEmailInput,
   SharePostByEmailResult,
 } from "./types";
+
+type EngagementModerationInput = ModerationCheckInput & {
+  requestContext?: EngagementRequestContext;
+};
 
 export type EngagementServiceOptions = {
   now?: () => Date;
@@ -324,7 +329,7 @@ export class EngagementService {
 
   private async checkRateLimit(
     action: string,
-    input: ModerationCheckInput,
+    input: EngagementModerationInput,
     limit: { windowSeconds: number; maxAttempts: number },
     countRecent: (since: Date) => Promise<number>,
   ) {
