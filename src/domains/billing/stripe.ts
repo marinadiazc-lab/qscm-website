@@ -272,16 +272,16 @@ type StripeSubscriptionResponse = {
 };
 
 function verifyStripeSignature(rawBody: string, signatureHeader: string, webhookSecret: string) {
-  const parts = Object.fromEntries(
-    signatureHeader.split(",").map((part) => {
-      const [key, value] = part.split("=", 2);
-      return [key, value];
-    }),
-  );
-  const timestamp = Number(parts.t);
-  const signature = parts.v1;
+  const parts = signatureHeader.split(",").map((part) => {
+    const [key, value] = part.split("=", 2);
+    return { key, value };
+  });
+  const timestamp = Number(parts.find((part) => part.key === "t")?.value);
+  const signatures = parts
+    .filter((part) => part.key === "v1" && part.value)
+    .map((part) => part.value);
 
-  if (!timestamp || !signature) {
+  if (!timestamp || signatures.length === 0) {
     throw new StripeApiError("Invalid Stripe signature header.", 400);
   }
 
@@ -295,12 +295,16 @@ function verifyStripeSignature(rawBody: string, signatureHeader: string, webhook
     .update(`${timestamp}.${rawBody}`)
     .digest("hex");
   const expectedBuffer = Buffer.from(expected, "hex");
-  const actualBuffer = Buffer.from(signature, "hex");
+  const hasMatchingSignature = signatures.some((signature) => {
+    const actualBuffer = Buffer.from(signature, "hex");
 
-  if (
-    expectedBuffer.length !== actualBuffer.length ||
-    !timingSafeEqual(expectedBuffer, actualBuffer)
-  ) {
+    return (
+      expectedBuffer.length === actualBuffer.length &&
+      timingSafeEqual(expectedBuffer, actualBuffer)
+    );
+  });
+
+  if (!hasMatchingSignature) {
     throw new StripeApiError("Invalid Stripe webhook signature.", 400);
   }
 }

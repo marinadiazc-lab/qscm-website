@@ -17,6 +17,10 @@ import type {
 import { StripeRestClient, type StripeWebhookEvent } from "./stripe";
 
 type BillingDatabase = Pick<DbClient, "select" | "insert" | "update" | "delete">;
+type ClaimedWebhookLog =
+  | { state: "claimed"; logState: "processing" }
+  | { state: "processed" | "ignored"; logState: "processed" | "ignored" }
+  | { state: "processing_duplicate"; logState: "received" | "processing" | "failed" };
 
 const STRIPE_SUBSCRIPTION_EVENTS = new Set([
   "checkout.session.completed",
@@ -105,6 +109,15 @@ export class BillingService {
       userId: input.userId,
       email: input.email,
     });
+    const existingAccess = await this.findCheckoutBlockingSubscription({
+      publicationId: input.publicationId,
+      userId: input.userId,
+      providerCustomerId: customer.providerCustomerId,
+    });
+
+    if (existingAccess) {
+      throw new Error("This account already has paid subscription access.");
+    }
 
     return this.client.createCheckoutSession({
       publicationId: input.publicationId,
@@ -216,27 +229,20 @@ export class BillingService {
       typeof input.rawBody === "string" ? input.rawBody : Buffer.from(input.rawBody).toString("utf8"),
     ) as Record<string, unknown>;
 
-    const [existing] = await this.database
-      .select()
-      .from(schema.webhookEventLogs)
-      .where(
-        and(
-          eq(schema.webhookEventLogs.provider, "stripe"),
-          eq(schema.webhookEventLogs.providerEventId, event.id),
-        ),
-      )
-      .limit(1);
+    const claimed = await this.claimWebhookLog(event, payload);
 
-    if (existing?.state === "processed" || existing?.state === "ignored") {
+    if (
+      claimed.state === "processed" ||
+      claimed.state === "ignored" ||
+      claimed.state === "processing_duplicate"
+    ) {
       return {
         provider: "stripe",
         providerEventId: event.id,
         eventType: event.type,
-        logState: existing.state,
+        logState: claimed.logState,
       };
     }
-
-    await this.upsertWebhookLog(event, payload, "processing");
 
     try {
       const subscription = await this.subscriptionFromWebhookEvent(event);
@@ -290,6 +296,7 @@ export class BillingService {
 
     let checked = 0;
     let updated = 0;
+    const reconciliationHighWaterMark = new Date();
     const discrepancies: string[] = [];
 
     for (const customer of customers) {
@@ -298,7 +305,9 @@ export class BillingService {
 
       for (const subscription of subscriptions) {
         const before = await this.findLocalSubscription(subscription.subscriptionId);
-        const status = await this.persistStripeSubscription(subscription);
+        const status = await this.persistStripeSubscription(subscription, {
+          eventCreatedAt: reconciliationHighWaterMark,
+        });
         updated += 1;
 
         if (before && before.status !== status) {
@@ -435,6 +444,34 @@ export class BillingService {
       .returning();
 
     return created;
+  }
+
+  private async findCheckoutBlockingSubscription(input: {
+    publicationId: string;
+    userId: string;
+    providerCustomerId: string;
+  }) {
+    const [subscription] = await this.database
+      .select()
+      .from(schema.subscriptions)
+      .where(
+        and(
+          eq(schema.subscriptions.publicationId, input.publicationId),
+          sql`(
+            ${schema.subscriptions.userId} = ${input.userId}
+            or ${schema.subscriptions.providerCustomerId} = ${input.providerCustomerId}
+          )`,
+          sql`${schema.subscriptions.status} in ('trialing', 'active', 'past_due', 'canceled')`,
+          sql`(
+            ${schema.subscriptions.status} != 'canceled'
+            or ${schema.subscriptions.accessEndsAt} > now()
+          )`,
+        ),
+      )
+      .orderBy(desc(schema.subscriptions.updatedAt))
+      .limit(1);
+
+    return subscription;
   }
 
   private async subscriptionFromWebhookEvent(
@@ -593,30 +630,64 @@ export class BillingService {
     }
   }
 
-  private async upsertWebhookLog(
+  private async claimWebhookLog(
     event: StripeWebhookEvent,
     payload: Record<string, unknown>,
-    state: "processing",
-  ) {
-    await this.database
+  ): Promise<ClaimedWebhookLog> {
+    const [claimed] = await this.database
       .insert(schema.webhookEventLogs)
       .values({
         provider: "stripe",
         providerEventId: event.id,
         eventType: event.type,
-        state,
+        state: "processing",
         payload,
         attemptCount: 1,
       })
       .onConflictDoUpdate({
         target: [schema.webhookEventLogs.provider, schema.webhookEventLogs.providerEventId],
         set: {
-          state,
+          state: "processing",
           payload,
           attemptCount: sql`${schema.webhookEventLogs.attemptCount} + 1`,
           lastError: null,
         },
-      });
+        setWhere: sql`${schema.webhookEventLogs.state} in ('received', 'failed')`,
+      })
+      .returning();
+
+    if (claimed) {
+      return {
+        state: "claimed",
+        logState: "processing",
+      };
+    }
+
+    const [existing] = await this.database
+      .select()
+      .from(schema.webhookEventLogs)
+      .where(
+        and(
+          eq(schema.webhookEventLogs.provider, "stripe"),
+          eq(schema.webhookEventLogs.providerEventId, event.id),
+        ),
+      )
+      .limit(1);
+
+    if (existing?.state === "processed" || existing?.state === "ignored") {
+      return {
+        state: existing.state,
+        logState: existing.state,
+      };
+    }
+
+    return {
+      state: "processing_duplicate",
+      logState:
+        existing?.state === "received" || existing?.state === "failed"
+          ? existing.state
+          : "processing",
+    };
   }
 
   private async markWebhookLog(
@@ -635,6 +706,7 @@ export class BillingService {
         and(
           eq(schema.webhookEventLogs.provider, "stripe"),
           eq(schema.webhookEventLogs.providerEventId, providerEventId),
+          eq(schema.webhookEventLogs.state, "processing"),
         ),
       );
   }
