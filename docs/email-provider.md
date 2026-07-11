@@ -100,7 +100,6 @@ of the process. Durable webhook idempotency must persist `email_provider_events`
 before #52 can close. The in-process processor maps:
 
 - `contact.updated` with `data.unsubscribed: true` to local `unsubscribed`
-- `contact.updated` with `data.unsubscribed: false` to local `active`
 - `email.bounced` to local `bounced`
 - `email.complained` to local `complained`
 - `email.suppressed` to local `suppressed`

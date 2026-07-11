@@ -522,13 +522,12 @@ describe("provider events", () => {
     expect(logDelivery).toHaveBeenCalledTimes(1);
   });
 
-  it("maps Resend contact.updated subscription state using contact payload email", async () => {
+  it("maps Resend contact.updated unsubscribes using contact payload email", async () => {
     const updateSubscriberStatus = vi.fn();
     const processor = new EmailProviderEventProcessor({
       updateSubscriberStatus,
     });
     const unsubscribed = parseResendWebhookEvent({
-      id: "evt_contact_unsubscribed",
       type: "contact.updated",
       created_at: now.toISOString(),
       data: {
@@ -537,30 +536,26 @@ describe("provider events", () => {
         unsubscribed: true,
       },
     });
-    const resubscribed = parseResendWebhookEvent({
-      id: "evt_contact_resubscribed",
+    const profileOnlyUpdate = parseResendWebhookEvent({
       type: "contact.updated",
-      created_at: now.toISOString(),
+      created_at: new Date(now.getTime() + 1000).toISOString(),
       data: {
         id: "contact_1",
         email: "reader@example.com",
         unsubscribed: false,
+        first_name: "Reader",
       },
     });
 
     await processor.process(unsubscribed);
-    await processor.process(resubscribed);
+    await processor.process(profileOnlyUpdate);
 
-    expect(updateSubscriberStatus).toHaveBeenNthCalledWith(1, {
+    expect(unsubscribed.id).not.toBe(profileOnlyUpdate.id);
+    expect(updateSubscriberStatus).toHaveBeenCalledTimes(1);
+    expect(updateSubscriberStatus).toHaveBeenCalledWith({
       email: "reader@example.com",
       subscriberId: undefined,
       status: "unsubscribed",
-      reason: "contact.updated",
-    });
-    expect(updateSubscriberStatus).toHaveBeenNthCalledWith(2, {
-      email: "reader@example.com",
-      subscriberId: undefined,
-      status: "active",
       reason: "contact.updated",
     });
   });

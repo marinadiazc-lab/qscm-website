@@ -68,7 +68,7 @@ export function parseResendWebhookEvent(payload: Record<string, unknown>): Email
   const rawType = String(payload.type ?? "unknown");
 
   return {
-    id: String(payload.id ?? `${payload.type}:${email.id ?? cryptoRandomId()}`),
+    id: String(payload.id ?? fallbackEventId(rawType, payload, data, email)),
     provider: "resend" as EmailProviderKey,
     type: rawType,
     createdAt: createdAt ? new Date(createdAt) : new Date(),
@@ -131,11 +131,24 @@ function statusForContactUpdate(
     return "unsubscribed";
   }
 
-  if (data.unsubscribed === false) {
-    return "active";
-  }
-
   return undefined;
+}
+
+function fallbackEventId(
+  type: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+  email: Record<string, unknown>,
+) {
+  return [
+    type,
+    payload.created_at,
+    email.id ?? data.id ?? data.email ?? email.to ?? email.recipient ?? data.recipient,
+    data.unsubscribed,
+  ]
+    .map((part) => stringValue(part) ?? String(part ?? ""))
+    .filter(Boolean)
+    .join(":") || `${type}:${cryptoRandomId()}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
