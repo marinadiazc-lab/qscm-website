@@ -94,11 +94,18 @@ export function mergeSubscriptionAndEntitlementGrants(
   return {
     ...(subscription ?? {}),
     status: status ?? "comped",
-    tierIds: uniqueValues([...(subscription?.tierIds ?? []), ...grants.tierIds]),
-    entitlementKeys: uniqueValues([
-      ...(subscription?.entitlementKeys ?? []),
-      ...grants.entitlementKeys,
-    ]),
+    tierId: grantOverridesSubscription
+      ? grants.tierIds[0]
+      : subscription?.tierId ?? grants.tierIds[0],
+    tierIds: grantOverridesSubscription
+      ? grants.tierIds
+      : uniqueValues([...(subscription?.tierIds ?? []), ...grants.tierIds]),
+    entitlementKeys: grantOverridesSubscription
+      ? grants.entitlementKeys
+      : uniqueValues([
+          ...(subscription?.entitlementKeys ?? []),
+          ...grants.entitlementKeys,
+        ]),
     compedGrantIds: grants.compedGrantIds,
     revokedGrantIds: grants.revokedGrantIds,
     accessEndsAt: grantOverridesSubscription

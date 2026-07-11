@@ -754,6 +754,65 @@ describe("local subscription entitlement projection", () => {
     });
   });
 
+  it("does not revive expired paid entitlements with a podcast-only grant", () => {
+    const grants = selectLocalEntitlementGrantState(
+      [
+        {
+          id: "grant-podcast-only",
+          publicationId: "pub-1",
+          userId: "user-1",
+          entitlementKey: "private_podcast",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+      {
+        publicationId: "pub-1",
+        userId: "user-1",
+        subscriberIds: [],
+        now,
+      },
+    );
+    const subscription = mergeSubscriptionAndEntitlementGrants(
+      {
+        status: "expired",
+        tierId: "pro",
+        tierIds: ["pro"],
+        entitlementKeys: ["paid_content", "tier:pro"],
+        currentPeriodEnd: "2026-07-01T00:00:00.000Z",
+      },
+      grants,
+    );
+    const entitlement = decideSubscriptionEntitlement(subscription, { now });
+
+    expect(subscription).toMatchObject({
+      status: "comped",
+      tierId: undefined,
+      tierIds: [],
+      entitlementKeys: ["private_podcast"],
+    });
+    expect(entitlement).toMatchObject({
+      allowed: true,
+      status: "comped",
+      tierId: undefined,
+      tierIds: [],
+      entitlementKeys: ["private_podcast"],
+    });
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("paid_any"),
+        viewer: {
+          kind: "authenticated",
+          subscription,
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
+    });
+  });
+
   it("parses scheduled tier-change metadata defensively", () => {
     expect(
       scheduledTierChangeFromMetadata({
