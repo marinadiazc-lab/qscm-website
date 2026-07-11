@@ -33,14 +33,14 @@ URL precedence:
 - `VERCEL_PROJECT_PRODUCTION_URL`
 - `http://localhost:3000` for local fallback
 
-OAuth providers are disabled unless both credentials for that provider are present:
+Google and Facebook OAuth providers are disabled unless both credentials for that provider are present:
 
 - `AUTH_GOOGLE_CLIENT_ID`
 - `AUTH_GOOGLE_CLIENT_SECRET`
 - `AUTH_FACEBOOK_CLIENT_ID`
 - `AUTH_FACEBOOK_CLIENT_SECRET`
-- `AUTH_APPLE_CLIENT_ID`
-- `AUTH_APPLE_CLIENT_SECRET`
+
+Apple OAuth is intentionally disabled in this milestone even when `AUTH_APPLE_CLIENT_ID` and `AUTH_APPLE_CLIENT_SECRET` are present. It should only be enabled after the callback verifies Apple `id_token` signatures and claims against Apple's JWKS.
 
 Disabled providers appear as unavailable on `/login` and redirect back with a usable error from `/api/auth/oauth/[provider]`.
 
@@ -69,7 +69,7 @@ OAuth sign-in that discovers an existing app user by verified email but without 
 Provider-specific notes:
 
 - Google and Facebook profiles are fetched from their userinfo endpoints after token exchange.
-- Apple profile data is derived from the token response `id_token`; production hardening should verify Apple JWT signatures and claims against Apple's JWKS before launch.
+- Apple sign-in is fail-closed until `id_token` signature, issuer, audience, expiration, and nonce validation are implemented against Apple's JWKS.
 - Provider client IDs/secrets and the canonical `AUTH_APP_URL`/site URL remain external configuration and are not committed to the repo.
 
 Manual/admin account merges should remain a documented support operation: inspect both users, verify ownership out of band, migrate entitlements/feed tokens/comments intentionally, then unlink or disable the duplicate provider account. Do not merge only because two providers return the same email address.

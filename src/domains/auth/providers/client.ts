@@ -79,7 +79,10 @@ export class FetchOAuthProviderClient implements OAuthProviderClient {
     token: OAuthTokenResponse;
   }): Promise<OAuthProviderProfile> {
     if (input.config.provider === "apple") {
-      return appleProfileFromToken(input.config, input.token);
+      throw new OAuthProviderError(
+        "Apple sign-in is disabled until id_token signature and claim verification is implemented.",
+        "invalid_profile",
+      );
     }
 
     if (!input.config.userInfoUrl || !input.token.access_token) {
@@ -144,42 +147,6 @@ function facebookProfileFromPayload(payload: Record<string, unknown>): OAuthProv
     displayName: stringValue(payload.name),
     avatarUrl: pictureUrl(payload.picture),
   };
-}
-
-function appleProfileFromToken(
-  config: OAuthProviderConfig,
-  token: OAuthTokenResponse,
-): OAuthProviderProfile {
-  const claims = decodeJwtClaims(token.id_token);
-  const sub = stringValue(claims.sub);
-
-  if (!sub) {
-    throw new OAuthProviderError("Apple id_token is missing a subject.", "invalid_profile");
-  }
-
-  return {
-    provider: config.provider,
-    providerAccountId: sub,
-    email: stringValue(claims.email),
-    emailVerified: claims.email_verified === true || claims.email_verified === "true",
-  };
-}
-
-function decodeJwtClaims(jwt: string | undefined): Record<string, unknown> {
-  const payload = jwt?.split(".")[1];
-
-  if (!payload) {
-    throw new OAuthProviderError("OAuth id_token is missing.", "invalid_profile");
-  }
-
-  try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<
-      string,
-      unknown
-    >;
-  } catch {
-    throw new OAuthProviderError("OAuth id_token payload is invalid.", "invalid_profile");
-  }
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -9,6 +9,7 @@ import {
   OAUTH_STATE_COOKIE,
   OAUTH_STATE_MAX_AGE_SECONDS,
   parseOAuthProvider,
+  sanitizeInternalRedirect,
 } from "@/src/domains/auth";
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
 
@@ -31,7 +32,7 @@ export async function GET(
 
   const url = new URL(request.url);
   const intent = url.searchParams.get("link") === "1" ? "link" : "sign_in";
-  const redirectTo = sanitizeRedirect(url.searchParams.get("redirectTo")) ?? "/account";
+  const redirectTo = sanitizeInternalRedirect(url.searchParams.get("redirectTo")) ?? "/account";
 
   if (intent === "link") {
     const auth = await getCurrentAuthSession();
@@ -75,12 +76,4 @@ export async function GET(
   );
 
   return NextResponse.redirect(providerUrl);
-}
-
-function sanitizeRedirect(value: string | null): string | undefined {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return undefined;
-  }
-
-  return value;
 }

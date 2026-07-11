@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { sanitizeInternalRedirect } from "@/src/domains/auth";
 import { consumeMagicLinkToken } from "@/src/domains/auth/server/runtime";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
-  const redirectTo = sanitizeRedirect(url.searchParams.get("redirectTo")) ?? "/account";
+  const redirectTo = sanitizeInternalRedirect(url.searchParams.get("redirectTo")) ?? "/account";
 
   if (!token) {
     return NextResponse.redirect(new URL("/login?error=invalid-link", request.url));
@@ -33,12 +34,4 @@ export async function GET(request: Request) {
 
     throw error;
   }
-}
-
-function sanitizeRedirect(value: string | null): string | undefined {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return undefined;
-  }
-
-  return value;
 }

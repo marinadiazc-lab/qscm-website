@@ -27,8 +27,7 @@ export function decodeOAuthState(value: string | undefined): OAuthStatePayload |
       typeof decoded.provider !== "string" ||
       (decoded.intent !== "sign_in" && decoded.intent !== "link") ||
       typeof decoded.redirectTo !== "string" ||
-      !decoded.redirectTo.startsWith("/") ||
-      decoded.redirectTo.startsWith("//")
+      !isSafeInternalRedirect(decoded.redirectTo)
     ) {
       return undefined;
     }
@@ -37,4 +36,16 @@ export function decodeOAuthState(value: string | undefined): OAuthStatePayload |
   } catch {
     return undefined;
   }
+}
+
+export function sanitizeInternalRedirect(value: string | null | undefined): string | undefined {
+  return isSafeInternalRedirect(value) ? value : undefined;
+}
+
+export function isSafeInternalRedirect(value: unknown): value is string {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
+    return false;
+  }
+
+  return !/[\\\u0000-\u001f\u007f]/.test(value) && !/%5c/i.test(value);
 }

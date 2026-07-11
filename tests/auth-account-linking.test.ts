@@ -19,6 +19,7 @@ import {
   requireAnyAuthRole,
   requireAuthRole,
   revokeMagicLinkRequest,
+  sanitizeInternalRedirect,
   type AuthAccount,
   type AuthSession,
   type AuthUser,
@@ -370,6 +371,19 @@ describe("provider configuration", () => {
       clientSecret: "secret",
     });
   });
+
+  it("keeps Apple disabled until id token verification is implemented", () => {
+    const config = getOAuthProviderConfig("apple", {
+      AUTH_APPLE_CLIENT_ID: "client",
+      AUTH_APPLE_CLIENT_SECRET: "secret",
+    });
+
+    expect(config).toMatchObject({
+      provider: "apple",
+      enabled: false,
+    });
+    expect(config.disabledReason).toContain("id_token signature");
+  });
 });
 
 describe("auth URLs", () => {
@@ -421,6 +435,18 @@ describe("auth URLs", () => {
         }),
       ),
     ).toBeUndefined();
+    expect(
+      decodeOAuthState(
+        encodeOAuthState({
+          state: "state_1",
+          provider: "google",
+          intent: "sign_in",
+          redirectTo: "/\\\\evil.example/path",
+        }),
+      ),
+    ).toBeUndefined();
+    expect(sanitizeInternalRedirect("/account")).toBe("/account");
+    expect(sanitizeInternalRedirect("/%5cevil.example/path")).toBeUndefined();
   });
 });
 

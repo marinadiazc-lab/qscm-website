@@ -26,6 +26,7 @@ import {
   magicLinkExpiresAt,
   normalizeAuthEmail,
   decideOAuthAccountLink,
+  sanitizeInternalRedirect,
   sessionExpiresAt,
   type OAuthProvider,
 } from "../index";
@@ -129,7 +130,7 @@ export async function requestMagicLink(input: {
     status: "requested",
     requestedAt: now,
     expiresAt: magicLinkExpiresAt(now),
-    redirectTo: sanitizeRedirect(input.redirectTo),
+    redirectTo: sanitizeInternalRedirect(input.redirectTo),
   });
   const magicLinkUrl = buildMagicLinkUrl({
     baseUrl: input.baseUrl ?? getAuthBaseUrl(),
@@ -524,12 +525,4 @@ function createMagicLinkSendService() {
 
 function hasTransactionalEmailConfig(env: NodeJS.ProcessEnv = process.env) {
   return Boolean(env.RESEND_API_KEY?.trim() && env.RESEND_DEFAULT_FROM?.trim());
-}
-
-function sanitizeRedirect(redirectTo?: string): string | undefined {
-  if (!redirectTo || !redirectTo.startsWith("/") || redirectTo.startsWith("//")) {
-    return undefined;
-  }
-
-  return redirectTo;
 }

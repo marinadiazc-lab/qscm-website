@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { listOAuthProviderConfigs } from "@/src/domains/auth";
+import { listOAuthProviderConfigs, sanitizeInternalRedirect } from "@/src/domains/auth";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -23,7 +23,7 @@ async function LoginContent({
   const params = (await searchParams) ?? {};
   const status = first(params.status);
   const error = first(params.error);
-  const redirectTo = sanitizeRedirect(first(params.redirectTo)) ?? "/account";
+  const redirectTo = sanitizeInternalRedirect(first(params.redirectTo)) ?? "/account";
   const providers = listOAuthProviderConfigs();
 
   return (
@@ -115,12 +115,4 @@ function authErrorMessage(error: string): string {
     default:
       return "Sign-in could not be completed.";
   }
-}
-
-function sanitizeRedirect(value: string | undefined): string | undefined {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return undefined;
-  }
-
-  return value;
 }

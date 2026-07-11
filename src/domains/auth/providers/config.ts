@@ -69,7 +69,8 @@ export function getOAuthProviderConfig(
   const keys = envKeys[provider];
   const clientId = env[keys.clientId];
   const clientSecret = env[keys.clientSecret];
-  const enabled = Boolean(clientId && clientSecret);
+  const appleVerificationReady = provider !== "apple";
+  const enabled = appleVerificationReady && Boolean(clientId && clientSecret);
 
   return {
     ...definition,
@@ -78,7 +79,9 @@ export function getOAuthProviderConfig(
     enabled,
     disabledReason: enabled
       ? undefined
-      : `${definition.displayName} sign-in is disabled until ${keys.clientId} and ${keys.clientSecret} are configured.`,
+      : provider === "apple"
+        ? "Apple sign-in is disabled until id_token signature and claim verification is implemented."
+        : `${definition.displayName} sign-in is disabled until ${keys.clientId} and ${keys.clientSecret} are configured.`,
   };
 }
 
