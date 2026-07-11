@@ -9,9 +9,9 @@ import { getAllPostSlugs, getPostBySlug } from "@/src/content/posts";
 import {
   evaluatePostAccess,
   getAccessiblePostBody,
-  getPostAccessViewerForRequest,
   type PostAccessDecision,
 } from "@/src/domains/content";
+import { getPostAccessViewerForRequest } from "@/src/domains/content/server-access";
 
 type PostPageProps = {
   params: Promise<{
@@ -59,7 +59,6 @@ export default async function PostPage({ params }: PostPageProps) {
     notFound();
   }
 
-  const viewer = await getPostAccessViewerForRequest();
   const accessDecision =
     preview && post.publicationState !== "published"
       ? {
@@ -69,9 +68,13 @@ export default async function PostPage({ params }: PostPageProps) {
           checkedAt: new Date(),
           lock: null,
         } satisfies PostAccessDecision
+      : post.accessRequirement.rule === "public"
+        ? evaluatePostAccess({
+            requirement: post.accessRequirement,
+          })
       : evaluatePostAccess({
           requirement: post.accessRequirement,
-          viewer,
+          viewer: await getPostAccessViewerForRequest(),
         });
   const accessibleBody = getAccessiblePostBody(post.body, accessDecision);
 
