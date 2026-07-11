@@ -73,6 +73,18 @@ Recommended stack:
 - Upstash Redis for rate limiting, locks, and simple queues.
 - A minimal built-in admin for operations. Do not build a post WYSIWYG editor.
 
+Email implementation note:
+
+- `src/domains/email` contains the provider-neutral contracts, Resend SDK
+  adapter, transactional templates, MDX post-to-broadcast helpers, send-intent
+  dedupe service/repository, provider event processing, and delivery log shape.
+- The durable production path uses database-backed send intents and delivery
+  logs. Keep the unique constraint on send dedupe keys and reserve sends
+  transactionally before provider calls.
+- DNS/domain verification remains external: Resend must provide the SPF, DKIM,
+  and DMARC records for the production domain, and the dashboard must report the
+  sending domain as verified before production broadcast or transactional sends.
+
 Post content strategy:
 
 - Posts live in files, for example `content/posts/my-post.md`.

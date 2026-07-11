@@ -81,6 +81,8 @@ function statusForEvent(type: string): EmailSubscriberStatus | undefined {
   switch (type) {
     case "contact.unsubscribed":
       return "unsubscribed";
+    case "contact.subscribed":
+      return "active";
     case "email.bounced":
       return "bounced";
     case "email.complained":
@@ -116,6 +118,8 @@ function messageForEvent(type: string) {
       return "Recipient marked the message as spam.";
     case "contact.unsubscribed":
       return "Recipient unsubscribed through the email provider.";
+    case "contact.subscribed":
+      return "Recipient resubscribed through the email provider.";
     default:
       return undefined;
   }

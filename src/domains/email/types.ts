@@ -247,6 +247,7 @@ export type TransactionalEmailPurpose =
   | "receipt"
   | "subscription_update"
   | "comment_notification"
+  | "share_by_email"
   | "admin"
   | "custom";
 
@@ -318,6 +319,7 @@ export type EmailProviderEventType =
   | "email.opened"
   | "email.clicked"
   | "contact.unsubscribed"
+  | "contact.subscribed"
   | (string & {});
 
 export type EmailProviderEvent = {
