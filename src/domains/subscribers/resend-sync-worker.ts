@@ -83,7 +83,7 @@ export class ResendSubscriberSyncWorker {
         providerContactId: sync.providerContactId,
         email: subscriber.email,
         name: stringMetadata(subscriber.metadata, "name"),
-        status: subscriber.status,
+        status: target.suppressed ? "unsubscribed" : subscriber.status,
         ...(audienceIds.length > 0 ? { audienceIds } : {}),
       });
 

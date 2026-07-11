@@ -199,6 +199,38 @@ describe("subscriber health states and admin operations", () => {
     );
     expect(csv).toContain("new@example.com");
   });
+
+  it("fails import rows with invalid status or boolean cells", async () => {
+    const repository = new InMemorySubscriberRepository();
+    const subscriberService = service(repository);
+    const rows = parseSubscriberCsv(
+      [
+        "email,status,marketingEmailOptIn",
+        "bad-status@example.com,paid,true",
+        "bad-bool@example.com,active,maybe",
+      ].join("\n"),
+    );
+    const result = await subscriberService.importRows("pub_1", rows);
+
+    expect(result).toMatchObject({
+      imported: 0,
+      updated: 0,
+      skipped: 2,
+    });
+    expect(result.errors).toMatchObject([
+      {
+        row: 2,
+        code: "invalid_row",
+        message: "Invalid subscriber status.",
+      },
+      {
+        row: 3,
+        code: "invalid_row",
+        message: "Invalid boolean value for marketingEmailOptIn.",
+      },
+    ]);
+    await expect(subscriberService.search({ publicationId: "pub_1" })).resolves.toEqual([]);
+  });
 });
 
 describe("Resend subscriber sync worker", () => {
@@ -291,6 +323,50 @@ describe("Resend subscriber sync worker", () => {
     expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
       syncStatus: "failed",
       lastError: "provider unavailable",
+    });
+  });
+
+  it("sends suppressed provider status when local preferences opt out", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber({ status: "active" })],
+      preferences: [preferences({ marketingEmailOptIn: false })],
+      syncs: [sync()],
+    });
+    const contacts: unknown[] = [];
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact(input) {
+          contacts.push(input);
+          return {
+            id: "contact_1",
+            provider: "resend",
+            publicationId: input.publicationId,
+            subscriberId: input.subscriberId,
+            email: input.email,
+            status: input.status ?? "active",
+            audienceIds: input.audienceIds ?? [],
+            segmentIds: [],
+            fields: {},
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+      },
+      {
+        suppressedAudienceId: "aud_suppressed",
+        now: () => now,
+      },
+    );
+
+    await expect(worker.runPending()).resolves.toMatchObject({
+      synced: 1,
+      failed: 0,
+    });
+    expect(contacts[0]).toMatchObject({
+      email: "reader@example.com",
+      status: "unsubscribed",
+      audienceIds: ["aud_suppressed"],
     });
   });
 });

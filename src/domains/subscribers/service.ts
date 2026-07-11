@@ -243,6 +243,10 @@ export class SubscriberService {
       const rowNumber = index + 2;
 
       try {
+        if (row.validationErrors?.length) {
+          throw new Error(row.validationErrors.join(" "));
+        }
+
         const result = await this.signup({
           publicationId,
           email: row.email,
@@ -348,15 +352,29 @@ export function parseSubscriberCsv(csv: string): SubscriberImportRow[] {
   return lines.slice(1).map((line) => {
     const cells = splitCsvLine(line);
     const row = Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]));
+    const status = parseStatusCell(row.status);
+    const marketingEmailOptIn = parseBooleanCell(row.marketingEmailOptIn, "marketingEmailOptIn");
+    const productEmailOptIn = parseBooleanCell(row.productEmailOptIn, "productEmailOptIn");
+    const commentNotificationOptIn = parseBooleanCell(
+      row.commentNotificationOptIn,
+      "commentNotificationOptIn",
+    );
+    const validationErrors = [
+      status.error,
+      marketingEmailOptIn.error,
+      productEmailOptIn.error,
+      commentNotificationOptIn.error,
+    ].filter((error): error is string => Boolean(error));
 
     return {
       email: row.email ?? "",
-      status: normalizeStatus(row.status),
+      status: status.value,
       source: cleanOptionalText(row.source),
       name: cleanOptionalText(row.name),
-      marketingEmailOptIn: parseBoolean(row.marketingEmailOptIn),
-      productEmailOptIn: parseBoolean(row.productEmailOptIn),
-      commentNotificationOptIn: parseBoolean(row.commentNotificationOptIn),
+      marketingEmailOptIn: marketingEmailOptIn.value,
+      productEmailOptIn: productEmailOptIn.value,
+      commentNotificationOptIn: commentNotificationOptIn.value,
+      validationErrors: validationErrors.length ? validationErrors : undefined,
     };
   });
 }
@@ -487,6 +505,34 @@ function parseBoolean(value: string | undefined): boolean | undefined {
   if (["true", "1", "yes", "y"].includes(normalized)) return true;
   if (["false", "0", "no", "n"].includes(normalized)) return false;
   return undefined;
+}
+
+function parseBooleanCell(value: string | undefined, field: string) {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return { value: undefined };
+  }
+
+  const parsed = parseBoolean(normalized);
+
+  return parsed === undefined
+    ? { value: undefined, error: `Invalid boolean value for ${field}.` }
+    : { value: parsed };
+}
+
+function parseStatusCell(value: string | undefined) {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return { value: undefined };
+  }
+
+  const status = normalizeStatus(normalized);
+
+  return status
+    ? { value: status }
+    : { value: undefined, error: "Invalid subscriber status." };
 }
 
 function normalizeStatus(value: string | undefined): SubscriberStatus | undefined {
