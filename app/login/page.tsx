@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { listOAuthProviderConfigs } from "@/src/domains/auth";
+import { listOAuthProviderConfigs, sanitizeInternalRedirect } from "@/src/domains/auth";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -23,6 +23,7 @@ async function LoginContent({
   const params = (await searchParams) ?? {};
   const status = first(params.status);
   const error = first(params.error);
+  const redirectTo = sanitizeInternalRedirect(first(params.redirectTo)) ?? "/account";
   const providers = listOAuthProviderConfigs();
 
   return (
@@ -46,7 +47,7 @@ async function LoginContent({
           <form className="form-stack" action="/api/auth/magic-link" method="post">
             <label htmlFor="email">Email address</label>
             <input id="email" name="email" type="email" autoComplete="email" required />
-            <input name="redirectTo" type="hidden" value="/account" />
+            <input name="redirectTo" type="hidden" value={redirectTo} />
             <button className="button" type="submit">
               Email me a sign-in link
             </button>
@@ -58,7 +59,7 @@ async function LoginContent({
                 <Link
                   key={provider.provider}
                   className="secondary-button provider-button"
-                  href={`/api/auth/oauth/${provider.provider}`}
+                  href={`/api/auth/oauth/${provider.provider}?redirectTo=${encodeURIComponent(redirectTo)}`}
                 >
                   Continue with {provider.displayName}
                 </Link>
@@ -97,6 +98,20 @@ function authErrorMessage(error: string): string {
       return "That sign-in link has already been used.";
     case "provider-disabled":
       return "That provider is not configured in this environment.";
+    case "provider-error":
+      return "The provider did not complete sign-in.";
+    case "provider-callback":
+      return "Provider sign-in could not be completed.";
+    case "provider-confirmation-required":
+      return "That provider needs an explicit confirmation before it can be linked to an existing account.";
+    case "provider-account-inactive":
+      return "That provider account cannot be used for sign-in.";
+    case "oauth-state":
+      return "Provider sign-in expired. Please try again.";
+    case "session-required":
+      return "Please sign in before linking another provider.";
+    case "disabled-user":
+      return "This account is disabled.";
     default:
       return "Sign-in could not be completed.";
   }

@@ -1,4 +1,5 @@
 import type {
+  AccountLinkingRecord,
   AuthAccount,
   AuthAccountId,
   AuthProvider,
@@ -19,6 +20,9 @@ export interface AuthRepository {
   findUserByEmail(email: string): AuthUser | undefined | Promise<AuthUser | undefined>;
   listUsers(): AuthUser[] | Promise<AuthUser[]>;
   saveAccount(account: AuthAccount): AuthAccount | Promise<AuthAccount>;
+  saveAccountForActiveUser?(
+    account: AuthAccount,
+  ): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   findAccountById(id: AuthAccountId): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   findAccountByProvider(
     provider: AuthProvider,
@@ -26,6 +30,9 @@ export interface AuthRepository {
   ): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   listAccountsForUser(userId: AuthUserId): AuthAccount[] | Promise<AuthAccount[]>;
   saveSession(session: AuthSession): AuthSession | Promise<AuthSession>;
+  saveSessionForActiveUser?(
+    session: AuthSession,
+  ): AuthSession | undefined | Promise<AuthSession | undefined>;
   findSessionById(id: AuthSessionId): AuthSession | undefined | Promise<AuthSession | undefined>;
   findSessionByTokenHash?(tokenHash: string): AuthSession | undefined | Promise<AuthSession | undefined>;
   listSessionsForUser(userId: AuthUserId): AuthSession[] | Promise<AuthSession[]>;
@@ -50,6 +57,13 @@ export interface AuthRepository {
     status: MagicLinkRequestStatus,
     changedAt: Date,
   ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
+  saveAccountLinkingRecord(
+    record: AccountLinkingRecord,
+  ): AccountLinkingRecord | Promise<AccountLinkingRecord>;
+  listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): AccountLinkingRecord[] | Promise<AccountLinkingRecord[]>;
 }
 
 export class InMemoryAuthRepository implements AuthRepository {
@@ -60,6 +74,7 @@ export class InMemoryAuthRepository implements AuthRepository {
     MagicLinkRequestId,
     MagicLinkRequest
   >();
+  private readonly accountLinkingRecords = new Map<string, AccountLinkingRecord>();
 
   constructor(seed: InMemoryAuthRepositorySeed = {}) {
     seed.users?.forEach((user) => {
@@ -73,6 +88,9 @@ export class InMemoryAuthRepository implements AuthRepository {
     });
     seed.magicLinkRequests?.forEach((request) => {
       this.magicLinkRequests.set(request.id, cloneMagicLinkRequest(request));
+    });
+    seed.accountLinkingRecords?.forEach((record) => {
+      this.accountLinkingRecords.set(record.id, cloneAccountLinkingRecord(record));
     });
   }
 
@@ -109,6 +127,27 @@ export class InMemoryAuthRepository implements AuthRepository {
     return cloneAccount(stored);
   }
 
+  saveAccountForActiveUser(account: AuthAccount): AuthAccount | undefined {
+    const user = this.users.get(account.userId);
+
+    if (!user || user.status !== "active" || user.disabledAt) {
+      return undefined;
+    }
+
+    const existingProviderAccount = Array.from(this.accounts.values()).find(
+      (candidate) =>
+        candidate.provider === account.provider &&
+        candidate.providerAccountId === account.providerAccountId &&
+        candidate.id !== account.id,
+    );
+
+    if (existingProviderAccount) {
+      return undefined;
+    }
+
+    return this.saveAccount(account);
+  }
+
   findAccountById(id: AuthAccountId): AuthAccount | undefined {
     const account = this.accounts.get(id);
 
@@ -139,6 +178,16 @@ export class InMemoryAuthRepository implements AuthRepository {
     const stored = cloneSession(session);
     this.sessions.set(stored.id, stored);
     return cloneSession(stored);
+  }
+
+  saveSessionForActiveUser(session: AuthSession): AuthSession | undefined {
+    const user = this.users.get(session.userId);
+
+    if (!user || user.status !== "active" || user.disabledAt) {
+      return undefined;
+    }
+
+    return this.saveSession(session);
   }
 
   findSessionById(id: AuthSessionId): AuthSession | undefined {
@@ -255,11 +304,32 @@ export class InMemoryAuthRepository implements AuthRepository {
     return cloneMagicLinkRequest(updated);
   }
 
+  saveAccountLinkingRecord(record: AccountLinkingRecord): AccountLinkingRecord {
+    const stored = cloneAccountLinkingRecord(record);
+    this.accountLinkingRecords.set(stored.id, stored);
+    return cloneAccountLinkingRecord(stored);
+  }
+
+  listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): AccountLinkingRecord[] {
+    return Array.from(this.accountLinkingRecords.values())
+      .filter(
+        (record) =>
+          record.provider === provider &&
+          record.providerAccountId === providerAccountId,
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map(cloneAccountLinkingRecord);
+  }
+
   clear() {
     this.users.clear();
     this.accounts.clear();
     this.sessions.clear();
     this.magicLinkRequests.clear();
+    this.accountLinkingRecords.clear();
   }
 }
 
@@ -268,6 +338,7 @@ export interface InMemoryAuthRepositorySeed {
   accounts?: readonly AuthAccount[];
   sessions?: readonly AuthSession[];
   magicLinkRequests?: readonly MagicLinkRequest[];
+  accountLinkingRecords?: readonly AccountLinkingRecord[];
 }
 
 function cloneUser(user: AuthUser): AuthUser {
@@ -324,6 +395,14 @@ function cloneMagicLinkRequest(request: MagicLinkRequest): MagicLinkRequest {
     requestContext: request.requestContext
       ? { ...request.requestContext }
       : undefined,
+  };
+}
+
+function cloneAccountLinkingRecord(record: AccountLinkingRecord): AccountLinkingRecord {
+  return {
+    ...record,
+    createdAt: new Date(record.createdAt),
+    metadata: record.metadata ? { ...record.metadata } : undefined,
   };
 }
 

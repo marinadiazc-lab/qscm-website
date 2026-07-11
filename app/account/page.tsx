@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { listOAuthProviderConfigs } from "@/src/domains/auth";
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
 import { BillingService } from "@/src/domains/billing";
 import { getDefaultPublicationId } from "@/src/domains/subscribers/runtime";
@@ -10,7 +11,11 @@ export const metadata: Metadata = {
   title: "Account",
 };
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const auth = await getCurrentAuthSession();
 
   if (!auth) {
@@ -22,6 +27,11 @@ export default async function AccountPage() {
     publicationId,
     userId: auth.user.id,
   });
+  const params = (await searchParams) ?? {};
+  const status = first(params.status);
+  const error = first(params.error);
+  const providers = listOAuthProviderConfigs();
+  const linkedProviders = new Set(auth.accounts.map((account) => account.provider));
   const podcastFeedUrl = getAccountPodcastFeedUrl(auth.user.metadata);
 
   return (
@@ -39,6 +49,11 @@ export default async function AccountPage() {
       </section>
 
       <section className="account-grid" aria-label="Account details">
+        {status === "provider-linked" ? (
+          <p className="notice success">Provider account linked.</p>
+        ) : null}
+        {error ? <p className="notice error">{accountErrorMessage(error)}</p> : null}
+
         <article className="account-card">
           <h2>Profile</h2>
           <dl className="detail-list">
@@ -71,9 +86,35 @@ export default async function AccountPage() {
               <li>No providers are linked yet.</li>
             )}
           </ul>
-          <Link className="secondary-button" href="/login">
-            Link another provider
-          </Link>
+          <div className="provider-list compact-provider-list" aria-label="Link providers">
+            {providers.map((provider) =>
+              provider.enabled && !linkedProviders.has(provider.provider) ? (
+                <Link
+                  key={provider.provider}
+                  className="secondary-button provider-button"
+                  href={`/api/auth/oauth/${provider.provider}?link=1&redirectTo=/account`}
+                >
+                  Link {provider.displayName}
+                </Link>
+              ) : (
+                <button
+                  key={provider.provider}
+                  className="secondary-button provider-button disabled"
+                  type="button"
+                  disabled
+                  title={
+                    linkedProviders.has(provider.provider)
+                      ? `${provider.displayName} is already linked.`
+                      : provider.disabledReason
+                  }
+                >
+                  {linkedProviders.has(provider.provider)
+                    ? `${provider.displayName} linked`
+                    : `${provider.displayName} unavailable`}
+                </button>
+              ),
+            )}
+          </div>
         </article>
 
         <article className="account-card">
@@ -127,6 +168,10 @@ export default async function AccountPage() {
   );
 }
 
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function getAccountPodcastFeedUrl(metadata: Record<string, unknown> | undefined) {
   const metadataFeedUrl = metadata?.privatePodcastFeedUrl;
 
@@ -156,4 +201,23 @@ function formatDate(date: Date): string {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
   }).format(date);
+}
+
+function accountErrorMessage(error: string): string {
+  switch (error) {
+    case "provider-confirmation-required":
+      return "That provider needs an explicit support confirmation before it can be linked.";
+    case "provider-account-inactive":
+      return "That provider account cannot be used for sign-in.";
+    case "disabled-user":
+      return "This account is disabled.";
+    case "provider-callback":
+      return "Provider linking could not be completed.";
+    case "oauth-state":
+      return "Provider linking expired. Please try again.";
+    case "database":
+      return "Account linking needs the database connection for this environment.";
+    default:
+      return "Account linking could not be completed.";
+  }
 }

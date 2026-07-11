@@ -1,4 +1,5 @@
 import type {
+  AccountLinkingRecord,
   AccountLinkingDecision,
   AuthAccount,
   AuthProvider,
@@ -65,6 +66,18 @@ export function decideOAuthAccountLink(
         accountId: existingAccount.id,
         targetUserId: targetUser.id,
         message: "This provider account is already linked to the user.",
+      };
+    }
+
+    if (!targetUser) {
+      return {
+        outcome: "already_linked",
+        reason: "provider_account_already_linked",
+        provider: profile.provider,
+        providerAccountId,
+        accountId: existingAccount.id,
+        targetUserId: existingAccount.userId,
+        message: "This provider account is already linked to a user.",
       };
     }
 
@@ -174,6 +187,75 @@ export function decideOAuthAccountLink(
     message:
       "No existing user or provider account was found for this verified email.",
   };
+}
+
+export function accountLinkingRecordFromDecision(input: {
+  id: string;
+  decision: AccountLinkingDecision;
+  profile: OAuthProviderProfile;
+  createdAt: Date;
+  metadata?: Record<string, string | number | boolean | null | undefined>;
+}): AccountLinkingRecord {
+  return {
+    id: input.id,
+    userId:
+      "targetUserId" in input.decision
+        ? input.decision.targetUserId
+        : "existingUserId" in input.decision
+          ? input.decision.existingUserId
+          : undefined,
+    provider: input.decision.provider,
+    providerAccountId: input.decision.providerAccountId,
+    email: input.profile.email ? normalizeAuthEmail(input.profile.email) : undefined,
+    decisionOutcome: input.decision.outcome,
+    decisionReason: input.decision.reason,
+    metadata: cleanAuthMetadata({
+      message: input.decision.message,
+      accountId: "accountId" in input.decision ? input.decision.accountId : undefined,
+      targetUserId:
+        "targetUserId" in input.decision ? input.decision.targetUserId : undefined,
+      existingUserId:
+        "existingUserId" in input.decision ? input.decision.existingUserId : undefined,
+      displayName: input.profile.displayName,
+      ...input.metadata,
+    }),
+    createdAt: input.createdAt,
+  };
+}
+
+export function authAccountFromOAuthProfile(input: {
+  id: string;
+  userId: string;
+  profile: OAuthProviderProfile;
+  now: Date;
+}): AuthAccount {
+  return {
+    id: input.id,
+    userId: input.userId,
+    provider: input.profile.provider,
+    providerAccountId: input.profile.providerAccountId,
+    email: input.profile.email ? normalizeAuthEmail(input.profile.email) : undefined,
+    emailVerifiedAt: input.profile.emailVerified ? input.now : undefined,
+    displayName: input.profile.displayName,
+    avatarUrl: input.profile.avatarUrl,
+    status: "active",
+    linkedAt: input.now,
+    lastAuthenticatedAt: input.now,
+    createdAt: input.now,
+    updatedAt: input.now,
+    metadata: input.profile.metadata,
+  };
+}
+
+function cleanAuthMetadata(
+  value: Record<string, string | number | boolean | null | undefined>,
+) {
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string | number | boolean | null] =>
+        entry[1] !== undefined,
+    ),
+  );
 }
 
 export function hasAuthRole(user: AuthUser, role: AuthRole): boolean {
