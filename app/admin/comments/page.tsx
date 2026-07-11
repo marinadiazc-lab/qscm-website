@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { requireAdminPageAccess } from "../_access";
+import { requireModerationPageAccess } from "../_access";
 import {
   AdminPageHeader,
   CommentTable,
@@ -22,16 +22,18 @@ type CommentPageProps = {
 };
 
 export default async function AdminCommentsPage({ searchParams }: CommentPageProps) {
-  await requireAdminPageAccess();
+  await requireModerationPageAccess();
 
   const params = (await searchParams) ?? {};
   const publication = await getAdminPublication();
+  const status = params.status || "suspicious";
   const comments = publication
     ? await listAdminComments({
         publicationId: publication.id,
-        status: params.status || "suspicious",
+        status,
       })
     : [];
+  const returnTo = `/admin/comments?status=${encodeURIComponent(status)}`;
 
   return (
     <div className="stack">
@@ -54,7 +56,11 @@ export default async function AdminCommentsPage({ searchParams }: CommentPagePro
           Filter
         </button>
       </form>
-      <CommentTable comments={comments} />
+      <CommentTable
+        comments={comments}
+        publicationId={publication?.id}
+        returnTo={returnTo}
+      />
     </div>
   );
 }

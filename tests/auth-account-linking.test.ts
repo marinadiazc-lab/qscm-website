@@ -3,7 +3,9 @@ import {
   accountLinkingRecordFromDecision,
   authAccountFromOAuthProfile,
   authSessionStatusForTime,
+  authorizeAdminShellSurface,
   authorizeAdminSurface,
+  authorizeModerationSurface,
   authorizeSubscriberAdminSurface,
   buildMagicLinkUrl,
   canConsumeMagicLink,
@@ -564,12 +566,70 @@ describe("RBAC guards", () => {
     });
   });
 
+  it("allows active moderators or admins through the moderation surface", () => {
+    expect(authorizeModerationSurface(undefined)).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
+    expect(authorizeModerationSurface(user())).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
+    expect(authorizeModerationSurface(user({ roles: ["moderator"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeModerationSurface(user({ roles: ["admin"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(
+      authorizeModerationSurface(
+        user({ roles: ["moderator"], status: "disabled", disabledAt: now }),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
+  });
+
+  it("allows admin shell access for each role with a guarded admin section", () => {
+    expect(authorizeAdminShellSurface(undefined)).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
+    expect(authorizeAdminShellSurface(user())).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
+    expect(authorizeAdminShellSurface(user({ roles: ["moderator"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeAdminShellSurface(user({ roles: ["support"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeAdminShellSurface(user({ roles: ["editor"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeAdminShellSurface(user({ roles: ["admin"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+  });
+
   it("allows subscriber admin surfaces for admin, support, or editor users only", () => {
     expect(authorizeSubscriberAdminSurface(undefined)).toMatchObject({
       allowed: false,
       status: 401,
     });
     expect(authorizeSubscriberAdminSurface(user())).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
+    expect(authorizeSubscriberAdminSurface(user({ roles: ["moderator"] }))).toMatchObject({
       allowed: false,
       status: 403,
     });

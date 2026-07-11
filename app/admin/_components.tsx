@@ -189,7 +189,15 @@ export function AccessGrantTable({ grants }: { grants: AdminAccessGrantRow[] }) 
   );
 }
 
-export function CommentTable({ comments }: { comments: AdminCommentRow[] }) {
+export function CommentTable({
+  comments,
+  publicationId,
+  returnTo = "/admin/comments",
+}: {
+  comments: AdminCommentRow[];
+  publicationId?: string;
+  returnTo?: string;
+}) {
   if (comments.length === 0) {
     return <AdminEmptyState>No comments are waiting in this queue.</AdminEmptyState>;
   }
@@ -215,18 +223,94 @@ export function CommentTable({ comments }: { comments: AdminCommentRow[] }) {
               </td>
               <td>
                 {comment.author}
-                <span className="admin-cell-note">{comment.email}</span>
+                <PrivateCommentField label="email" value={comment.email} />
+                <PrivateCommentField label="website" value={comment.website} />
+                <PrivateCommentField
+                  label="registered user"
+                  value={comment.registeredUserId}
+                />
               </td>
               <td>{comment.status}</td>
               <td>{comment.auditCount} checks</td>
               <td>
-                <DisabledAdminButton>Moderate</DisabledAdminButton>
+                {publicationId ? (
+                  <div className="admin-action-row">
+                    <ModerationActionForm
+                      action="approve"
+                      commentId={comment.id}
+                      label="Approve"
+                      publicationId={publicationId}
+                      returnTo={returnTo}
+                    />
+                    <ModerationActionForm
+                      action="reject"
+                      commentId={comment.id}
+                      label="Reject"
+                      publicationId={publicationId}
+                      returnTo={returnTo}
+                    />
+                    <ModerationActionForm
+                      action="delete"
+                      commentId={comment.id}
+                      label="Delete"
+                      publicationId={publicationId}
+                      returnTo={returnTo}
+                    />
+                  </div>
+                ) : (
+                  <DisabledAdminButton>Unavailable</DisabledAdminButton>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PrivateCommentField({ label, value }: { label: string; value: string }) {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    <span className="admin-cell-note admin-private-field">
+      Private {label}: {value}
+    </span>
+  );
+}
+
+function ModerationActionForm({
+  action,
+  commentId,
+  label,
+  publicationId,
+  returnTo,
+}: {
+  action: "approve" | "reject" | "delete";
+  commentId: string;
+  label: string;
+  publicationId: string;
+  returnTo: string;
+}) {
+  return (
+    <form
+      action={`/api/admin/comments/${commentId}/moderation`}
+      className="admin-action-form"
+      method="post"
+    >
+      <input name="publicationId" type="hidden" value={publicationId} />
+      <input name="returnTo" type="hidden" value={returnTo} />
+      <button
+        className={action === "approve" ? "button" : "secondary-button"}
+        name="action"
+        type="submit"
+        value={action}
+      >
+        {label}
+      </button>
+    </form>
   );
 }
 
