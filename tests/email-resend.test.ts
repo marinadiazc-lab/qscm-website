@@ -521,4 +521,47 @@ describe("provider events", () => {
     });
     expect(logDelivery).toHaveBeenCalledTimes(1);
   });
+
+  it("maps Resend contact.updated subscription state using contact payload email", async () => {
+    const updateSubscriberStatus = vi.fn();
+    const processor = new EmailProviderEventProcessor({
+      updateSubscriberStatus,
+    });
+    const unsubscribed = parseResendWebhookEvent({
+      id: "evt_contact_unsubscribed",
+      type: "contact.updated",
+      created_at: now.toISOString(),
+      data: {
+        id: "contact_1",
+        email: "reader@example.com",
+        unsubscribed: true,
+      },
+    });
+    const resubscribed = parseResendWebhookEvent({
+      id: "evt_contact_resubscribed",
+      type: "contact.updated",
+      created_at: now.toISOString(),
+      data: {
+        id: "contact_1",
+        email: "reader@example.com",
+        unsubscribed: false,
+      },
+    });
+
+    await processor.process(unsubscribed);
+    await processor.process(resubscribed);
+
+    expect(updateSubscriberStatus).toHaveBeenNthCalledWith(1, {
+      email: "reader@example.com",
+      subscriberId: undefined,
+      status: "unsubscribed",
+      reason: "contact.updated",
+    });
+    expect(updateSubscriberStatus).toHaveBeenNthCalledWith(2, {
+      email: "reader@example.com",
+      subscriberId: undefined,
+      status: "active",
+      reason: "contact.updated",
+    });
+  });
 });

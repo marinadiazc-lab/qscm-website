@@ -99,8 +99,8 @@ headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
 of the process. Durable webhook idempotency must persist `email_provider_events`
 before #52 can close. The in-process processor maps:
 
-- `contact.unsubscribed` to local `unsubscribed`
-- `contact.subscribed` to local `active`
+- `contact.updated` with `data.unsubscribed: true` to local `unsubscribed`
+- `contact.updated` with `data.unsubscribed: false` to local `active`
 - `email.bounced` to local `bounced`
 - `email.complained` to local `complained`
 - `email.suppressed` to local `suppressed`

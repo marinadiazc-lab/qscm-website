@@ -318,8 +318,7 @@ export type EmailProviderEventType =
   | "email.suppressed"
   | "email.opened"
   | "email.clicked"
-  | "contact.unsubscribed"
-  | "contact.subscribed"
+  | "contact.updated"
   | (string & {});
 
 export type EmailProviderEvent = {
