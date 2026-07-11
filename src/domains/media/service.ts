@@ -34,6 +34,7 @@ export class MediaService {
   async registerUpload(input: MediaUploadInput): Promise<MediaUploadResult> {
     const now = input.now ?? this.clock();
     const access = input.access ?? "public";
+    const assetId = this.idFactory();
     const mimeType = resolveMimeType(input.fileName, input.contentType);
     assertAllowedMimeType(mimeType);
 
@@ -57,6 +58,7 @@ export class MediaService {
       publicationId: input.publicationId,
       fileName: input.fileName,
       checksumSha256,
+      assetId,
       now,
     });
     const stored = await this.storage.putObject({
@@ -67,7 +69,7 @@ export class MediaService {
     });
 
     const asset: MediaAsset = {
-      id: this.idFactory(),
+      id: assetId,
       publicationId: input.publicationId,
       kind,
       status: "ready",
@@ -118,6 +120,7 @@ export function buildObjectKey(input: {
   publicationId: string;
   fileName: string;
   checksumSha256: string;
+  assetId: string;
   now: Date;
 }) {
   const ext = path.extname(input.fileName).toLowerCase();
@@ -128,8 +131,13 @@ export function buildObjectKey(input: {
     .replace(/^-+|-+$/g, "")
     .toLowerCase() || "media";
   const month = input.now.toISOString().slice(0, 7);
+  const assetKey = input.assetId
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || input.checksumSha256.slice(12, 24);
 
-  return `${input.publicationId}/${month}/${baseName}-${input.checksumSha256.slice(0, 12)}${ext}`;
+  return `${input.publicationId}/${month}/${baseName}-${input.checksumSha256.slice(0, 12)}-${assetKey}${ext}`;
 }
 
 function sha256(body: Buffer) {

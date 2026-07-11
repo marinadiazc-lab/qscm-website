@@ -58,7 +58,9 @@ describe("media upload registration", () => {
       height: 1,
       altText: "Editorial cover",
     });
-    expect(result.asset.stablePath).toMatch(/^\/media\/pub_1\/2026-07\/cover-image-[a-f0-9]{12}\.png$/);
+    expect(result.asset.stablePath).toMatch(
+      /^\/media\/pub_1\/2026-07\/cover-image-[a-f0-9]{12}-asset_1\.png$/,
+    );
     expect(result.asset.publicUrl).toBe(result.asset.stablePath);
     expect(fs.existsSync(path.join(publicRoot, result.asset.objectKey))).toBe(true);
   });
@@ -143,6 +145,58 @@ describe("media upload registration", () => {
 
     expect(objectKey).toBeTruthy();
     expect(fs.existsSync(path.join(publicRoot, objectKey))).toBe(false);
+  });
+
+  it("does not remove a previous upload when a later persistence attempt rejects", async () => {
+    const publicRoot = makeTempDir();
+    const repository = new InMemoryMediaRepository();
+    const ids = ["asset_existing", "asset_failed"];
+    const service = new MediaService(
+      repository,
+      new LocalMediaStorageProvider({ publicRoot }),
+      {
+        idFactory: () => ids.shift() ?? "asset_extra",
+        clock: () => now,
+      },
+    );
+    const existing = await service.registerUpload({
+      publicationId: "pub_1",
+      fileName: "cover.png",
+      contentType: "image/png",
+      body: pngOneByOne,
+      altText: "Editorial cover",
+    });
+    let failedObjectKey = "";
+    const failingService = new MediaService(
+      {
+        save: async (asset) => {
+          failedObjectKey = asset.objectKey;
+          throw new Error("duplicate asset row");
+        },
+        findById: async () => undefined,
+        findByStablePath: async () => undefined,
+        listRetentionCandidates: async () => [],
+      },
+      new LocalMediaStorageProvider({ publicRoot }),
+      {
+        idFactory: () => ids.shift() ?? "asset_extra",
+        clock: () => now,
+      },
+    );
+
+    await expect(
+      failingService.registerUpload({
+        publicationId: "pub_1",
+        fileName: "cover.png",
+        contentType: "image/png",
+        body: pngOneByOne,
+        altText: "Editorial cover",
+      }),
+    ).rejects.toThrow("duplicate asset row");
+
+    expect(fs.existsSync(path.join(publicRoot, existing.asset.objectKey))).toBe(true);
+    expect(failedObjectKey).not.toBe(existing.asset.objectKey);
+    expect(fs.existsSync(path.join(publicRoot, failedObjectKey))).toBe(false);
   });
 
   it("identifies retention candidates without deleting them", async () => {
