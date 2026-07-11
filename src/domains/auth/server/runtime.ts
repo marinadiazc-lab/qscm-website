@@ -178,18 +178,20 @@ export async function consumeMagicLinkToken(input: {
   }
 
   const user = await findOrCreateMagicLinkUser(repository, request.email, now);
-  const sessionToken = createOpaqueToken();
-  const session = await repository.saveSession({
-    id: createAuthId("session"),
-    userId: user.id,
-    tokenHash: hashAuthToken(sessionToken),
-    status: "active",
-    createdAt: now,
-    expiresAt: sessionExpiresAt(now),
-  });
+
+  if (!user) {
+    return { status: "invalid", message: "That sign-in link is not valid." };
+  }
+
+  const session = await createAndSetSession(repository, user.id, now);
+
+  if (!session) {
+    await repository.saveMagicLinkRequest({ ...request, userId: user.id });
+
+    return { status: "invalid", message: "That sign-in link is not valid." };
+  }
 
   await repository.saveMagicLinkRequest({ ...request, userId: user.id, sessionId: session.id });
-  await setSessionCookie(sessionToken, session.expiresAt);
 
   return { status: "authenticated", user, session };
 }
@@ -314,7 +316,7 @@ export async function completeOAuthCallback(input: {
         return disabledUserResult();
       }
 
-      const account = await repository.saveAccount({
+      const account = await saveAccountForActiveUser(repository, {
         ...existingAccount,
         email: profile.email ? normalizeAuthEmail(profile.email) : existingAccount.email,
         emailVerifiedAt: profile.emailVerified ? now : existingAccount.emailVerifiedAt,
@@ -323,6 +325,10 @@ export async function completeOAuthCallback(input: {
         lastAuthenticatedAt: now,
         updatedAt: now,
       });
+
+      if (!account) {
+        return disabledUserResult();
+      }
 
       if (input.targetUser) {
         return { status: "already_linked", user, account };
@@ -405,12 +411,17 @@ async function findOrCreateMagicLinkUser(
   repository: AuthRepository,
   email: string,
   now: Date,
-): Promise<AuthUser> {
+): Promise<AuthUser | undefined> {
   const existingUser = await repository.findUserByEmail(email);
 
   if (existingUser) {
-    await ensureEmailMagicLinkAccount(repository, existingUser, now);
-    return existingUser;
+    if (!isActiveAuthUser(existingUser)) {
+      return undefined;
+    }
+
+    const account = await ensureEmailMagicLinkAccount(repository, existingUser, now);
+
+    return account ? existingUser : undefined;
   }
 
   const user: AuthUser = await repository.saveUser({
@@ -423,27 +434,27 @@ async function findOrCreateMagicLinkUser(
     updatedAt: now,
   });
 
-  await ensureEmailMagicLinkAccount(repository, user, now);
+  const account = await ensureEmailMagicLinkAccount(repository, user, now);
 
-  return user;
+  return account ? user : undefined;
 }
 
 async function ensureEmailMagicLinkAccount(
   repository: AuthRepository,
   user: AuthUser,
   now: Date,
-): Promise<AuthAccount> {
+): Promise<AuthAccount | undefined> {
   const existingAccount = await repository.findAccountByProvider("email_magic_link", user.email);
 
   if (existingAccount) {
-    return repository.saveAccount({
+    return saveAccountForActiveUser(repository, {
       ...existingAccount,
       lastAuthenticatedAt: now,
       updatedAt: now,
     });
   }
 
-  return repository.saveAccount({
+  return saveAccountForActiveUser(repository, {
     id: createAuthId("account"),
     userId: user.id,
     provider: "email_magic_link",
@@ -456,6 +467,10 @@ async function ensureEmailMagicLinkAccount(
     createdAt: now,
     updatedAt: now,
   });
+}
+
+function isActiveAuthUser(user: AuthUser): boolean {
+  return user.status === "active" && !user.disabledAt;
 }
 
 async function createAndSetSession(
