@@ -5,7 +5,7 @@ export function escapeCsvCell(value: string) {
   const neutralized = dangerousCsvPrefix.test(value) ? `'${value}` : value;
   const escaped = neutralized.replaceAll('"', '""');
 
-  return /[",\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
+  return /[",\n\r\t]/.test(escaped) ? `"${escaped}"` : escaped;
 }
 
 export function redactSensitiveValue(value: unknown): unknown {
