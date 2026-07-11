@@ -40,6 +40,19 @@ export class MediaService {
     const kind = mediaKindForMimeType(mimeType);
     const checksumSha256 = sha256(input.body);
     const dimensions = readImageDimensions(input.body, mimeType);
+
+    if (kind === "image" && !input.altText) {
+      throw new Error("Image uploads require alt text before they can be registered.");
+    }
+
+    if (
+      (kind === "audio" || kind === "video") &&
+      input.durationSeconds !== undefined &&
+      (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0)
+    ) {
+      throw new Error("Audio and video duration must be a positive number of seconds.");
+    }
+
     const objectKey = buildObjectKey({
       publicationId: input.publicationId,
       fileName: input.fileName,
@@ -77,18 +90,6 @@ export class MediaService {
       createdAt: now,
       updatedAt: now,
     };
-
-    if (asset.kind === "image" && !asset.altText) {
-      throw new Error("Image uploads require alt text before they can be registered.");
-    }
-
-    if (
-      (asset.kind === "audio" || asset.kind === "video") &&
-      input.durationSeconds !== undefined &&
-      (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0)
-    ) {
-      throw new Error("Audio and video duration must be a positive number of seconds.");
-    }
 
     return {
       asset: await this.repository.save(asset),

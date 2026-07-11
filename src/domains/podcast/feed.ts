@@ -163,9 +163,14 @@ export function mediaAssetToPodcastEnclosure(
   const deliveryMode =
     options.deliveryMode ??
     (asset.access === "public" ? "stable_cdn_obscure_url" : "strict_signed_audio_url");
+  const url = asset.publicUrl ?? asset.stablePath;
+
+  if (asset.access !== "public" && !asset.publicUrl) {
+    throw new Error("Non-public podcast enclosures require a signed delivery URL.");
+  }
 
   return {
-    url: absoluteUrl(asset.publicUrl ?? asset.stablePath, options.baseUrl),
+    url: absoluteUrl(url, options.baseUrl),
     mimeType: asset.mimeType,
     byteLength: asset.byteLength,
     durationSeconds: asset.durationSeconds,

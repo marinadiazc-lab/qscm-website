@@ -63,8 +63,9 @@ describe("media upload registration", () => {
     expect(fs.existsSync(path.join(publicRoot, result.asset.objectKey))).toBe(true);
   });
 
-  it("rejects invalid types and image uploads without alt text", async () => {
-    const service = mediaServiceForTests();
+  it("rejects invalid types and image uploads without alt text before writing files", async () => {
+    const publicRoot = makeTempDir();
+    const service = mediaServiceForTests({ publicRoot });
 
     await expect(
       service.registerUpload({
@@ -83,10 +84,13 @@ describe("media upload registration", () => {
         body: pngOneByOne,
       }),
     ).rejects.toThrow("Image uploads require alt text");
+    expect(fs.readdirSync(publicRoot)).toEqual([]);
   });
 
   it("keeps admin media off public URLs while retaining metadata", async () => {
-    const service = mediaServiceForTests();
+    const publicRoot = makeTempDir();
+    const privateRoot = makeTempDir();
+    const service = mediaServiceForTests({ publicRoot, privateRoot });
     const result = await service.registerUpload({
       publicationId: "pub_1",
       fileName: "briefing.mp3",
@@ -103,6 +107,8 @@ describe("media upload registration", () => {
       stablePath: expect.stringMatching(/^media-private:\/\//),
       durationSeconds: 95,
     });
+    expect(fs.existsSync(path.join(publicRoot, result.asset.objectKey))).toBe(false);
+    expect(fs.existsSync(path.join(privateRoot, result.asset.objectKey))).toBe(true);
   });
 
   it("identifies retention candidates without deleting them", async () => {
@@ -182,12 +188,33 @@ describe("podcast media enclosures", () => {
       checksumSha256: "abc",
     });
   });
+
+  it("rejects private podcast enclosures until signed delivery exists", () => {
+    expect(() =>
+      mediaAssetToPodcastEnclosure(
+        {
+          kind: "audio",
+          stablePath: "media-private://pub_1/audio.mp3",
+          mimeType: "audio/mpeg",
+          byteLength: 123,
+          durationSeconds: 45,
+          checksumSha256: "abc",
+          objectKey: "pub_1/audio.mp3",
+          access: "admin",
+        },
+        { baseUrl: "https://qscm.example" },
+      ),
+    ).toThrow("Non-public podcast enclosures require a signed delivery URL");
+  });
 });
 
-function mediaServiceForTests() {
+function mediaServiceForTests(options: { publicRoot?: string; privateRoot?: string } = {}) {
   return new MediaService(
     new InMemoryMediaRepository(),
-    new LocalMediaStorageProvider({ publicRoot: makeTempDir() }),
+    new LocalMediaStorageProvider({
+      publicRoot: options.publicRoot ?? makeTempDir(),
+      privateRoot: options.privateRoot ?? makeTempDir(),
+    }),
     {
       idFactory: () => "asset_1",
       clock: () => now,

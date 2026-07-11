@@ -48,8 +48,9 @@ provider object key, image dimensions where detectable, and audio/video duration
 when supplied. Unsupported file types are rejected.
 
 Local public uploads are written under `public/media/<publication>/<yyyy-mm>/`.
-Admin and entitled uploads receive a non-public `media-private://` stable path
-and no `publicUrl`.
+Admin and entitled uploads are written under a private local storage root,
+receive a non-public `media-private://` stable path, and do not receive a
+`publicUrl`.
 
 ## MDX And Static Content
 
@@ -85,14 +86,15 @@ Public media object keys include a checksum prefix, so updates should create a
 new stable path rather than mutating cached bytes in place.
 
 Podcast audio URLs used in RSS must be stable and externally reachable by
-podcast clients. Private RSS feed access is token-gated separately; strict
-signed audio URLs are documented as the future mode for higher-security private
-audio.
+podcast clients. Private RSS feed access is token-gated separately. Non-public
+media assets are rejected as podcast enclosures until signed audio delivery is
+implemented.
 
 ## Private/Admin Media
 
 Admin-only and entitled media are explicitly not written to public URLs by the
-local provider. The current route requires an authenticated admin before upload.
+local provider. Local private bytes are stored outside `public/`; the current
+route requires an authenticated admin before upload.
 
 Full entitled media delivery still needs a signed delivery route integrated with
 subscription entitlement checks. Until that exists, private assets must not be
