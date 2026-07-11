@@ -5,7 +5,7 @@ Posts are authored as Markdown or MDX files. The file is the source of truth for
 ## Add a Post
 
 1. Create a file in `content/posts`.
-2. Use `.md` for plain Markdown or `.mdx` when the post needs MDX features.
+2. Use `.md` for Obsidian-friendly Markdown or `.mdx` when the post needs MDX-specific features.
 3. Add YAML frontmatter at the top of the file.
 4. Write the post body below the closing `---`.
 5. Commit the file with the rest of the site changes.
@@ -182,9 +182,9 @@ Current fixtures cover the main states:
 
 | File | Purpose |
 | --- | --- |
-| `content/posts/welcome.mdx` | Public post with cover image, SEO, and media references. |
-| `content/posts/free-subscriber-note.mdx` | Free subscriber visibility. |
-| `content/posts/paid-foundation.mdx` | Paid subscriber visibility. |
-| `content/posts/scheduled-briefing.mdx` | Scheduled post hidden from public output. |
-| `content/posts/draft-lab-note.mdx` | Draft post hidden from public output. |
-| `content/pages/about.mdx` | Static inner page pattern. |
+| `content/posts/welcome.md` | Public post with cover image, SEO, and media references. |
+| `content/posts/free-subscriber-note.md` | Free subscriber visibility. |
+| `content/posts/paid-foundation.md` | Paid subscriber visibility. |
+| `content/posts/scheduled-briefing.md` | Scheduled post hidden from public output. |
+| `content/posts/draft-lab-note.md` | Draft post hidden from public output. |
+| `content/pages/about.md` | Static inner page pattern. |

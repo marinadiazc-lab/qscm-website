@@ -1,0 +1,8 @@
+{
+  "alwaysUpdateLinks": true,
+  "attachmentFolderPath": "public/media",
+  "newFileLocation": "folder",
+  "newFileFolderPath": "content/posts",
+  "showUnsupportedFiles": false,
+  "useMarkdownLinks": true
+}

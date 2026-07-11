@@ -75,7 +75,7 @@ Recommended stack:
 
 Post content strategy:
 
-- Posts live in files, for example `content/posts/my-post.mdx`.
+- Posts live in files, for example `content/posts/my-post.md`.
 - Frontmatter carries static metadata: slug, title, excerpt, author, publish date, cover image, SEO fields, and default visibility.
 - The compiled site reads posts from the filesystem and renders them statically where possible.
 - The database stores dynamic overlays that cannot live safely in Git: comments, likes, subscriber state, Stripe state, private feed tokens, email sends, and optional access-rule overrides.
@@ -539,7 +539,7 @@ src/
       podcast/[showSlug]/[token]/rss.xml/
   content/
     posts/
-      example-post.mdx
+      example-post.md
     pages/
   components/
     content/

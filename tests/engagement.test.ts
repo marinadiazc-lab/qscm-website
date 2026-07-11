@@ -189,7 +189,7 @@ describe("engagement service", () => {
     );
   });
 
-  it("maps a valid MDX post into database post metadata for engagement persistence", () => {
+  it("maps a valid Markdown post into database post metadata for engagement persistence", () => {
     const post = getPostBySlug("welcome");
 
     expect(post).toBeDefined();
@@ -198,7 +198,7 @@ describe("engagement service", () => {
     expect(createEngagementPostMetadata(post)).toMatchObject({
       slug: "welcome",
       title: "Welcome to the QSCM foundation",
-      sourcePath: expect.stringContaining("content/posts/welcome.mdx"),
+      sourcePath: expect.stringContaining("content/posts/welcome.md"),
       sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       status: "published",
       visibility: "public",

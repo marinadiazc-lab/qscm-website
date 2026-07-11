@@ -22,7 +22,7 @@ media:
     alt: "QSCM editorial cover artwork"
 ---
 
-This post lives in `content/posts/welcome.mdx`.
+This post lives in `content/posts/welcome.md`.
 
 The site compiles it into a public post page, while future subscriber state,
 comments, likes, and email delivery can stay in services around the file.
