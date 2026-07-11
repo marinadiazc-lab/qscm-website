@@ -113,6 +113,10 @@ function oauthErrorForResult(status: string, reason: string): string {
     return "provider-account-inactive";
   }
 
+  if (reason === "provider_disabled") {
+    return "provider-disabled";
+  }
+
   return "provider-callback";
 }
 

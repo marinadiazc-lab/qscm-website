@@ -276,6 +276,12 @@ export async function completeOAuthCallback(input: {
     }
 
     if (decision.outcome === "link") {
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
+
       const account = await repository.saveAccount(
         authAccountFromOAuthProfile({
           id: createAuthId("account"),
@@ -284,11 +290,6 @@ export async function completeOAuthCallback(input: {
           now,
         }),
       );
-      const user = await repository.findUserById(decision.targetUserId);
-
-      if (!user || user.status !== "active" || user.disabledAt) {
-        return disabledUserResult();
-      }
 
       return { status: "linked", user, account };
     }
