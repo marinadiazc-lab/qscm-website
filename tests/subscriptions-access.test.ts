@@ -5,6 +5,11 @@ import {
   getPastDueGracePeriodEnd,
 } from "../src/domains/subscriptions";
 import {
+  mergeSubscriptionAndEntitlementGrants,
+  scheduledTierChangeFromMetadata,
+  selectLocalEntitlementGrantState,
+} from "../src/domains/subscriptions/local-entitlements";
+import {
   derivePostAccessRequirement,
   derivePostAccessRequirementFromVisibility,
   evaluatePostAccess,
@@ -522,6 +527,57 @@ describe("content access requirements", () => {
       allowed: true,
       reason: "specific_tier",
     });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "comped",
+            entitlementKeys: ["private_podcast"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "comped",
+            entitlementKeys: ["addon:archive"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
+    });
+
+    expect(
+      evaluatePostAccess({
+        requirement: paidRequirement,
+        viewer: {
+          kind: "authenticated",
+          subscription: {
+            status: "comped",
+            entitlementKeys: ["paid_content"],
+          },
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      reason: "paid_subscription",
+    });
   });
 
   it("uses grace, canceled-through-period, and expired entitlement decisions for paid posts", () => {
@@ -534,6 +590,7 @@ describe("content access requirements", () => {
           kind: "authenticated",
           subscription: {
             status: "past_due",
+            tierId: "basic",
             currentPeriodEnd: "2026-07-09T12:00:00.000Z",
           },
         },
@@ -551,6 +608,7 @@ describe("content access requirements", () => {
           kind: "authenticated",
           subscription: {
             status: "canceled",
+            tierId: "basic",
             currentPeriodEnd: "2026-07-11T12:00:00.000Z",
           },
         },
@@ -577,5 +635,150 @@ describe("content access requirements", () => {
       allowed: false,
       reason: "subscription_required",
     });
+  });
+});
+
+describe("local subscription entitlement projection", () => {
+  it("selects active subject grants and excludes revoked, expired, and unrelated rows", () => {
+    const grants = selectLocalEntitlementGrantState(
+      [
+        {
+          id: "grant-active",
+          publicationId: "pub-1",
+          userId: "user-1",
+          entitlementKey: "paid_content",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+          endsAt: new Date("2026-08-01T00:00:00.000Z"),
+        },
+        {
+          id: "grant-subscriber",
+          publicationId: "pub-1",
+          subscriberId: "sub-1",
+          entitlementKey: "private_podcast",
+          source: "campaign",
+          tierId: "tier-uuid",
+          tierSlug: "founding",
+          tierEntitlementKeys: ["paid_content"],
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+          endsAt: null,
+        },
+        {
+          id: "grant-revoked",
+          publicationId: "pub-1",
+          userId: "user-1",
+          entitlementKey: "paid_content",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+          revokedAt: new Date("2026-07-05T00:00:00.000Z"),
+        },
+        {
+          id: "grant-expired",
+          publicationId: "pub-1",
+          userId: "user-1",
+          entitlementKey: "paid_content",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+          endsAt: new Date("2026-07-09T00:00:00.000Z"),
+        },
+        {
+          id: "grant-other-user",
+          publicationId: "pub-1",
+          userId: "user-2",
+          entitlementKey: "paid_content",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+      {
+        publicationId: "pub-1",
+        userId: "user-1",
+        subscriberIds: ["sub-1"],
+        now,
+      },
+    );
+
+    expect(grants).toMatchObject({
+      tierIds: ["tier-uuid", "founding"],
+      entitlementKeys: [
+        "paid_content",
+        "private_podcast",
+        "tier:tier-uuid",
+        "tier:founding",
+      ],
+      compedGrantIds: ["grant-active"],
+      revokedGrantIds: ["grant-revoked"],
+      accessEndsAt: null,
+    });
+  });
+
+  it("keeps non-web grants from unlocking paid post bodies", () => {
+    const grants = selectLocalEntitlementGrantState(
+      [
+        {
+          id: "grant-podcast-only",
+          publicationId: "pub-1",
+          userId: "user-1",
+          entitlementKey: "private_podcast",
+          source: "admin_comped",
+          startsAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+      {
+        publicationId: "pub-1",
+        userId: "user-1",
+        subscriberIds: [],
+        now,
+      },
+    );
+    const subscription = mergeSubscriptionAndEntitlementGrants(null, grants);
+    const entitlement = decideSubscriptionEntitlement(subscription, { now });
+
+    expect(entitlement).toMatchObject({
+      allowed: true,
+      status: "comped",
+      entitlementKeys: ["private_podcast"],
+    });
+    expect(
+      evaluatePostAccess({
+        requirement: derivePostAccessRequirementFromVisibility("paid_any"),
+        viewer: {
+          kind: "authenticated",
+          subscription,
+        },
+        now,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "subscription_required",
+    });
+  });
+
+  it("parses scheduled tier-change metadata defensively", () => {
+    expect(
+      scheduledTierChangeFromMetadata({
+        scheduledTierChange: {
+          fromTierId: "basic",
+          toTierId: "pro",
+          effectiveAt: "2026-07-10T00:00:00.000Z",
+          accessPolicy: "period_end",
+        },
+      }),
+    ).toMatchObject({
+      fromTierId: "basic",
+      toTierId: "pro",
+      effectiveAt: "2026-07-10T00:00:00.000Z",
+      accessPolicy: "period_end",
+    });
+
+    expect(
+      scheduledTierChangeFromMetadata({
+        scheduledTierChange: {
+          toTierId: "pro",
+          effectiveAt: "2026-07-10T00:00:00.000Z",
+          accessPolicy: "unsupported",
+        },
+      }),
+    ).toBeNull();
   });
 });

@@ -8,12 +8,15 @@ import type { AuthUser } from "../auth";
 import type {
   EntitlementKey,
   SubscriptionStatus,
-  TierId,
 } from "./types";
 import type {
   SubscriptionEntitlementState,
-  SubscriptionTierChange,
 } from "./entitlements";
+import {
+  mergeSubscriptionAndEntitlementGrants,
+  projectLocalEntitlementGrantState,
+  scheduledTierChangeFromMetadata,
+} from "./local-entitlements";
 
 export interface LocalSubscriptionEntitlementLookup {
   subscription: SubscriptionEntitlementState | null;
@@ -39,7 +42,7 @@ export async function getLocalSubscriptionEntitlementForUser(
   ]);
 
   return {
-    subscription: mergeSubscriptionAndGrants(subscription, grants),
+    subscription: mergeSubscriptionAndEntitlementGrants(subscription, grants),
     isFreeSubscriber: subscriberIds.length > 0,
   };
 }
@@ -176,107 +179,7 @@ async function getEntitlementGrantState(
       ),
     );
 
-  const tierIds = uniqueValues(
-    activeRows.flatMap((row) => [row.tierId, row.tierSlug]),
-  );
-  const entitlementKeys = uniqueValues(
-    activeRows.flatMap((row) => [
-      row.entitlementKey,
-      ...(row.tierEntitlementKeys ?? []),
-      row.tierId ? `tier:${row.tierId}` : undefined,
-      row.tierSlug ? `tier:${row.tierSlug}` : undefined,
-    ]),
-  ) as EntitlementKey[];
-  const compedGrantIds = activeRows
-    .filter((row) => row.source === "admin_comped")
-    .map((row) => row.id);
-
-  return {
-    tierIds,
-    entitlementKeys,
-    compedGrantIds,
-    revokedGrantIds: revokedRows.map((row) => row.id),
-    accessEndsAt: activeRows.some((row) => row.endsAt === null)
-      ? null
-      : earliestDate(activeRows.map((row) => row.endsAt)),
-  };
-}
-
-function mergeSubscriptionAndGrants(
-  subscription: SubscriptionEntitlementState | null,
-  grants: {
-    tierIds: TierId[];
-    entitlementKeys: EntitlementKey[];
-    compedGrantIds: string[];
-    revokedGrantIds: string[];
-    accessEndsAt: Date | null;
-  },
-): SubscriptionEntitlementState | null {
-  if (!subscription && grants.entitlementKeys.length === 0) {
-    return null;
-  }
-
-  const status = grants.entitlementKeys.length > 0 && isGrantOverrideStatus(subscription?.status)
-    ? "comped"
-    : subscription?.status;
-  const grantOverridesSubscription = status === "comped" && subscription?.status !== "comped";
-
-  return {
-    ...(subscription ?? {}),
-    status: status ?? "comped",
-    tierIds: uniqueValues([...(subscription?.tierIds ?? []), ...grants.tierIds]),
-    entitlementKeys: uniqueValues([
-      ...(subscription?.entitlementKeys ?? []),
-      ...grants.entitlementKeys,
-    ]),
-    compedGrantIds: grants.compedGrantIds,
-    revokedGrantIds: grants.revokedGrantIds,
-    accessEndsAt: grantOverridesSubscription
-      ? grants.accessEndsAt
-      : subscription?.accessEndsAt ?? grants.accessEndsAt,
-  };
-}
-
-function isGrantOverrideStatus(status: SubscriptionStatus | undefined) {
-  return !status || ["free", "expired", "incomplete", "incomplete_expired", "paused"].includes(status);
-}
-
-function scheduledTierChangeFromMetadata(
-  metadata: Record<string, unknown>,
-): SubscriptionTierChange | null {
-  const value = metadata.scheduledTierChange;
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const input = value as Record<string, unknown>;
-  const effectiveAt = input.effectiveAt;
-  const toTierId = input.toTierId;
-  const accessPolicy = input.accessPolicy;
-
-  if (
-    typeof toTierId !== "string" ||
-    !(effectiveAt instanceof Date || typeof effectiveAt === "string" || typeof effectiveAt === "number") ||
-    (accessPolicy !== "immediate" && accessPolicy !== "period_end")
-  ) {
-    return null;
-  }
-
-  return {
-    fromTierId: typeof input.fromTierId === "string" ? input.fromTierId : undefined,
-    toTierId,
-    effectiveAt,
-    accessPolicy,
-  };
-}
-
-function earliestDate(dates: readonly (Date | null)[]) {
-  return (
-    dates
-      .filter((date): date is Date => Boolean(date))
-      .sort((left, right) => left.getTime() - right.getTime())[0] ?? null
-  );
+  return projectLocalEntitlementGrantState({ activeRows, revokedRows });
 }
 
 function uniqueValues<T>(values: readonly (T | null | undefined)[]) {

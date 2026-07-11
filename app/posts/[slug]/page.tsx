@@ -9,9 +9,9 @@ import { getAllPostSlugs, getPostBySlug } from "@/src/content/posts";
 import {
   evaluatePostAccess,
   getAccessiblePostBody,
-  getPostAccessViewerForRequest,
   type PostAccessDecision,
 } from "@/src/domains/content";
+import { getPostAccessViewerForRequest } from "@/src/domains/content/server-access";
 
 type PostPageProps = {
   params: Promise<{

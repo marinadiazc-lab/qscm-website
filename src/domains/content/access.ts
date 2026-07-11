@@ -168,7 +168,18 @@ export function evaluatePostAccess(input: EvaluatePostAccessInput): PostAccessDe
   }
 
   if (requirement.rule === "paid_subscription") {
-    return allow("paid_subscription", requirement, checkedAt);
+    if (hasPaidPostAccess(entitlement)) {
+      return allow("paid_subscription", requirement, checkedAt);
+    }
+
+    return deny({
+      reason: "subscription_required",
+      requirement,
+      checkedAt,
+      title: "Upgrade to keep reading",
+      message: "This post is available to paid subscribers.",
+      primaryAction: "subscribe",
+    });
   }
 
   if (hasRequiredTier(requirement.allowedTierIds, entitlement)) {
@@ -225,6 +236,14 @@ function hasRequiredTier(allowedTierIds: readonly ContentTierId[], entitlement: 
   ].filter((tierId): tierId is string => Boolean(tierId)));
 
   return allowedTierIds.some((tierId) => tierIds.has(tierId));
+}
+
+function hasPaidPostAccess(entitlement: EntitlementDecision) {
+  if (entitlement.entitlementKeys.includes("paid_content")) {
+    return true;
+  }
+
+  return Boolean(entitlement.tierId || entitlement.tierIds.length > 0);
 }
 
 function getAuthenticationMessage(requirement: PostAccessRequirement) {
