@@ -203,6 +203,22 @@ export class DatabaseSubscriberRepository implements SubscriberRepository {
     return rows.map(fromSyncRow);
   }
 
+  async listPendingProviderSyncs(provider: string, limit = 50): Promise<SubscriberProviderSync[]> {
+    const rows = await db
+      .select()
+      .from(schema.subscriberProviderSyncs)
+      .where(
+        and(
+          eq(schema.subscriberProviderSyncs.provider, provider),
+          eq(schema.subscriberProviderSyncs.syncStatus, "pending"),
+        ),
+      )
+      .orderBy(schema.subscriberProviderSyncs.updatedAt)
+      .limit(limit);
+
+    return rows.map(fromSyncRow);
+  }
+
   async queueSync(request: SubscriberSyncRequest, now: Date): Promise<boolean> {
     const current = await this.findProviderSync(request.subscriberId, request.provider);
     await this.saveProviderSync({

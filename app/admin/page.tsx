@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { requireAdminPageAccess } from "./_access";
 import { AdminEmptyState, AdminPageHeader, MetricGrid } from "./_components";
 import {
   getAdminPublication,
@@ -15,6 +16,8 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminDashboardPage() {
+  await requireAdminPageAccess();
+
   const publication = await getAdminPublication();
 
   if (!publication) {

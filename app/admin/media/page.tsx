@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { requireAdminPageAccess } from "../_access";
 import {
   AdminEmptyState,
   AdminPageHeader,
@@ -16,6 +17,8 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminMediaPage() {
+  await requireAdminPageAccess();
+
   const publication = await getAdminPublication();
 
   if (!publication) {

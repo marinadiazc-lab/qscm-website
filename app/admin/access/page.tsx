@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { requireAdminPageAccess } from "../_access";
 import {
   AccessGrantTable,
   AdminEmptyState,
@@ -16,6 +17,8 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminAccessPage() {
+  await requireAdminPageAccess();
+
   const publication = await getAdminPublication();
 
   if (!publication) {

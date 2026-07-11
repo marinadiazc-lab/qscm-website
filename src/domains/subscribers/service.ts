@@ -41,6 +41,10 @@ export interface SubscriberRepository {
     provider: string,
   ): Promise<SubscriberProviderSync | undefined> | SubscriberProviderSync | undefined;
   listProviderSyncs(subscriberId: string): Promise<SubscriberProviderSync[]> | SubscriberProviderSync[];
+  listPendingProviderSyncs?(
+    provider: string,
+    limit?: number,
+  ): Promise<SubscriberProviderSync[]> | SubscriberProviderSync[];
   queueSync(request: SubscriberSyncRequest, now: Date): Promise<boolean> | boolean;
 }
 

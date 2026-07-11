@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   authSessionStatusForTime,
   authorizeAdminSurface,
+  authorizeSubscriberAdminSurface,
   buildMagicLinkUrl,
   canConsumeMagicLink,
   consumeMagicLinkRequest,
@@ -336,6 +337,29 @@ describe("RBAC guards", () => {
       status: 403,
     });
     expect(authorizeAdminSurface(user({ roles: ["reader", "admin"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+  });
+
+  it("allows subscriber admin surfaces for admin, support, or editor users only", () => {
+    expect(authorizeSubscriberAdminSurface(undefined)).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
+    expect(authorizeSubscriberAdminSurface(user())).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
+    expect(authorizeSubscriberAdminSurface(user({ roles: ["support"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeSubscriberAdminSurface(user({ roles: ["editor"] }))).toMatchObject({
+      allowed: true,
+      status: 200,
+    });
+    expect(authorizeSubscriberAdminSurface(user({ roles: ["admin"] }))).toMatchObject({
       allowed: true,
       status: 200,
     });

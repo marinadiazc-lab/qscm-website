@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   AdminEmptyState,
   AdminPageHeader,
-  DisabledAdminButton,
   SubscriberTable,
 } from "../_components";
 import {
@@ -21,8 +20,12 @@ export const metadata: Metadata = {
 
 type SubscriberPageProps = {
   searchParams?: Promise<{
+    failed?: string;
+    imported?: string;
     q?: string;
     status?: string;
+    skipped?: string;
+    updated?: string;
   }>;
 };
 
@@ -58,10 +61,15 @@ export default async function AdminSubscribersPage({ searchParams }: SubscriberP
             <Link className="secondary-button" href="/admin/subscribers/export">
               Export CSV
             </Link>
-            <DisabledAdminButton>Import</DisabledAdminButton>
           </div>
         }
       />
+      {params.imported ? (
+        <p className="notice" role="status">
+          Import complete: {params.imported} imported, {params.updated ?? "0"} updated,{" "}
+          {params.skipped ?? "0"} skipped, {params.failed ?? "0"} failed.
+        </p>
+      ) : null}
       <form className="admin-filter-form">
         <label>
           Search
@@ -82,6 +90,20 @@ export default async function AdminSubscribersPage({ searchParams }: SubscriberP
           Filter
         </button>
       </form>
+      <section className="wire-panel">
+        <h2>Import CSV</h2>
+        <form action="/admin/subscribers/import" className="form-grid" method="post">
+          <textarea
+            aria-label="Subscriber CSV"
+            name="csv"
+            placeholder="email,name,status,source,marketingEmailOptIn"
+            rows={5}
+          />
+          <button className="button" type="submit">
+            Import subscribers
+          </button>
+        </form>
+      </section>
       <SubscriberTable subscribers={subscribers} />
     </div>
   );
