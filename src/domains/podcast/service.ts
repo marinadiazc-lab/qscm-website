@@ -6,6 +6,7 @@ import type {
   PodcastFeedGenerationResult,
   PodcastRssFeed,
   PodcastShow,
+  PrivateFeedDeniedProbe,
   PrivateFeedRawToken,
   PrivateFeedRequestContext,
   PrivateFeedSharingSignal,
@@ -31,6 +32,7 @@ export interface PodcastRepository {
   ): PrivateFeedToken | undefined | Promise<PrivateFeedToken | undefined>;
   saveToken(token: PrivateFeedToken): PrivateFeedToken | Promise<PrivateFeedToken>;
   recordAuditEvent(event: PrivateFeedTokenAuditEvent): void | Promise<void>;
+  recordDeniedFeedProbe?(probe: PrivateFeedDeniedProbe): void | Promise<void>;
   listAccessEventsForToken?(
     tokenId: PrivateFeedTokenId,
     since: Date,
@@ -67,12 +69,21 @@ export interface BuildPrivateFeedInput
 }
 
 export type BuildPrivateFeedResult =
-  | (PodcastFeedGenerationResult & { status: 200; show: PodcastShow; token: PrivateFeedToken })
+  | (PodcastFeedGenerationResult & {
+      allowed: true;
+      feed: PodcastRssFeed;
+      status: 200;
+      show: PodcastShow;
+      token: PrivateFeedToken;
+    })
   | {
       allowed: false;
       status: 401 | 403 | 404;
       reason: string;
       deniedEpisodeIds: string[];
+      feed?: undefined;
+      show?: undefined;
+      token?: undefined;
     };
 
 export function createPrivateFeedRawToken() {
@@ -145,22 +156,33 @@ export async function rotatePrivateFeedToken(
     return undefined;
   }
 
-  const replacement = await issuePrivateFeedToken({
-    repository: input.repository,
+  const rawToken = createPrivateFeedRawToken();
+  const replacementToken: PrivateFeedToken = {
+    id: createPodcastId(),
     publicationId: existing.publicationId,
-    show: input.show,
+    showId: existing.showId,
     subscriberId: existing.subscriberId,
     userId: existing.userId,
-    baseUrl: input.baseUrl,
-    now,
+    tokenHash: hashPrivateFeedToken(rawToken),
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
     expiresAt: input.expiresAt,
+  };
+  const savedReplacement = await input.repository.saveToken(replacementToken);
+  await input.repository.recordAuditEvent({
+    id: createPodcastId(),
+    tokenId: savedReplacement.id,
+    kind: "issued",
+    occurredAt: now,
+    showId: existing.showId,
   });
 
   await input.repository.saveToken({
     ...existing,
     status: "rotated",
     rotatedAt: now,
-    rotatedToTokenId: replacement.token.id,
+    rotatedToTokenId: savedReplacement.id,
     updatedAt: now,
   });
   await input.repository.recordAuditEvent({
@@ -171,7 +193,23 @@ export async function rotatePrivateFeedToken(
     showId: existing.showId,
   });
 
-  return replacement;
+  const feedShow =
+    input.show && (!existing.showId || input.show.id === existing.showId)
+      ? input.show
+      : undefined;
+
+  return {
+    token: savedReplacement,
+    rawToken,
+    feedUrl:
+      input.baseUrl && feedShow
+        ? buildPrivateFeedUrl({
+            baseUrl: input.baseUrl,
+            showSlug: feedShow.slug,
+            rawToken,
+          })
+        : undefined,
+  };
 }
 
 export async function revokePrivateFeedToken(input: RevokePrivateFeedTokenInput) {
@@ -203,12 +241,33 @@ export async function buildPrivatePodcastFeed(
   input: BuildPrivateFeedInput,
 ): Promise<BuildPrivateFeedResult> {
   const generatedAt = input.generatedAt ?? new Date();
+  const tokenHash = hashPrivateFeedToken(input.rawToken);
   const [show, token] = await Promise.all([
     input.repository.findShowBySlug(input.showSlug),
-    input.repository.findTokenByHash(hashPrivateFeedToken(input.rawToken)),
+    input.repository.findTokenByHash(tokenHash),
   ]);
 
   if (!show) {
+    await recordDeniedFeedProbe(input.repository, {
+      tokenHash,
+      showSlug: input.showSlug,
+      tokenId: token?.id,
+      showId: token?.showId,
+      reason: "show_not_found",
+      occurredAt: generatedAt,
+      requestContext: input.requestContext,
+    });
+    if (token) {
+      await input.repository.recordAuditEvent({
+        id: createPodcastId(),
+        tokenId: token.id,
+        kind: "access_denied",
+        occurredAt: generatedAt,
+        reason: "show_not_found",
+        requestContext: input.requestContext,
+      });
+    }
+
     return {
       allowed: false,
       status: 404,
@@ -218,6 +277,15 @@ export async function buildPrivatePodcastFeed(
   }
 
   if (!token) {
+    await recordDeniedFeedProbe(input.repository, {
+      tokenHash,
+      showSlug: input.showSlug,
+      showId: show.id,
+      reason: "token_not_found",
+      occurredAt: generatedAt,
+      requestContext: input.requestContext,
+    });
+
     return {
       allowed: false,
       status: 401,
@@ -249,18 +317,38 @@ export async function buildPrivatePodcastFeed(
 
   if (!result.allowed) {
     return {
-      ...result,
+      allowed: false,
+      deniedEpisodeIds: result.deniedEpisodeIds,
       reason: result.decision.reason,
       status: result.decision.reason.startsWith("token_") ? 401 : 403,
     };
   }
 
+  if (!result.feed) {
+    return {
+      allowed: false,
+      deniedEpisodeIds: result.deniedEpisodeIds,
+      reason: "feed_unavailable",
+      status: 403,
+    };
+  }
+
   return {
-    ...result,
+    allowed: true,
+    decision: result.decision,
+    feed: result.feed,
+    deniedEpisodeIds: result.deniedEpisodeIds,
     status: 200,
     show,
     token,
   };
+}
+
+async function recordDeniedFeedProbe(
+  repository: PodcastRepository,
+  probe: PrivateFeedDeniedProbe,
+) {
+  await repository.recordDeniedFeedProbe?.(probe);
 }
 
 export function serializePodcastRss(feed: PodcastRssFeed) {

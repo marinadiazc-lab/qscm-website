@@ -8,6 +8,7 @@ import type {
   PodcastMediaEnclosure,
   PodcastOwnerContact,
   PodcastShow,
+  PrivateFeedDeniedProbe,
   PrivateFeedRequestContext,
   PrivateFeedToken,
   PrivateFeedTokenAuditEvent,
@@ -86,7 +87,7 @@ export class DrizzlePodcastRepository implements PodcastRepository {
       episodeId: event.episodeId,
       allowed: event.kind === "access_granted" ? true : event.kind === "access_denied" ? false : undefined,
       reason: event.reason,
-      requestContext: event.requestContext,
+      requestContext: toJsonObject(event.requestContext),
       occurredAt: event.occurredAt,
     });
 
@@ -96,6 +97,23 @@ export class DrizzlePodcastRepository implements PodcastRepository {
         .set({ lastAccessedAt: event.occurredAt, updatedAt: event.occurredAt })
         .where(eq(schema.privateFeedTokens.id, event.tokenId));
     }
+  }
+
+  async recordDeniedFeedProbe(probe: PrivateFeedDeniedProbe): Promise<void> {
+    await this.db.insert(schema.auditLogs).values({
+      action: "podcast.private_feed_denied",
+      subjectType: probe.tokenId ? "private_feed_token" : "private_feed_token_hash",
+      subjectId: probe.tokenId ?? probe.tokenHash,
+      sensitivity: "security",
+      metadata: toJsonObject({
+        tokenHash: probe.tokenHash,
+        showSlug: probe.showSlug,
+        showId: probe.showId,
+        reason: probe.reason,
+      }),
+      requestContext: toJsonObject(probe.requestContext),
+      createdAt: probe.occurredAt,
+    });
   }
 
   async listAccessEventsForToken(
@@ -129,9 +147,9 @@ function showFromRow(row: typeof schema.podcastShows.$inferSelect): PodcastShow 
     siteUrl: row.siteUrl,
     feedUrl: row.feedUrl ?? undefined,
     authorName: row.authorName ?? undefined,
-    owner: row.owner ? (row.owner as PodcastOwnerContact) : undefined,
+    owner: row.owner ? (row.owner as unknown as PodcastOwnerContact) : undefined,
     explicit: row.explicit,
-    defaultAccessRule: row.defaultAccessRule as PodcastAccessRule,
+    defaultAccessRule: row.defaultAccessRule as unknown as PodcastAccessRule,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     publishedAt: row.publishedAt ?? undefined,
@@ -148,8 +166,8 @@ function episodeFromRow(row: typeof schema.podcastEpisodes.$inferSelect): Podcas
     description: row.description,
     status: row.status,
     visibility: row.visibility,
-    accessRule: row.accessRule ? (row.accessRule as PodcastAccessRule) : undefined,
-    enclosure: row.enclosure as PodcastMediaEnclosure,
+    accessRule: row.accessRule ? (row.accessRule as unknown as PodcastAccessRule) : undefined,
+    enclosure: row.enclosure as unknown as PodcastMediaEnclosure,
     seasonNumber: row.seasonNumber ?? undefined,
     episodeNumber: row.episodeNumber ?? undefined,
     explicit: row.explicit,
@@ -209,7 +227,13 @@ function auditEventFromRow(
     episodeId: row.episodeId ?? undefined,
     reason: row.reason ?? undefined,
     requestContext: row.requestContext
-      ? (row.requestContext as PrivateFeedRequestContext)
+      ? (row.requestContext as unknown as PrivateFeedRequestContext)
       : undefined,
   };
+}
+
+function toJsonObject<T extends object>(
+  value: T | null | undefined,
+): Record<string, unknown> | undefined {
+  return value ? ({ ...value } as Record<string, unknown>) : undefined;
 }

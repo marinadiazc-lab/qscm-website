@@ -43,7 +43,7 @@ Access attempts should be recorded as token audit or access events with the toke
 
 Raw tokens are only available when issued or rotated. Stored tokens use a `sha256:` hash, so account pages must persist or display the feed URL at issuance time rather than attempting to reconstruct it from database state later.
 
-The account page can display a private feed URL from `user.metadata.privatePodcastFeedUrl` or `PRIVATE_PODCAST_FEED_URL`. Token regeneration and revocation actions are intentionally left for the next support/account-control slice.
+The account page can display a per-user private feed URL from `user.metadata.privatePodcastFeedUrl`. Token regeneration and revocation actions are intentionally left for the next support/account-control slice.
 
 ## Sharing Signals
 

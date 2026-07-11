@@ -16,6 +16,7 @@ import {
   type PodcastEpisode,
   type PodcastRepository,
   type PodcastShow,
+  type PrivateFeedDeniedProbe,
   type PrivateFeedTokenAuditEvent,
   type PrivateFeedToken,
 } from "../src/domains/podcast";
@@ -268,6 +269,30 @@ describe("private feed token service", () => {
     ]);
   });
 
+  it("preserves show scope when rotating tokens without a show argument", async () => {
+    const repository = new InMemoryPodcastRepository();
+    const issued = await issuePrivateFeedToken({
+      repository,
+      publicationId: "pub_1",
+      show: show(),
+      now,
+    });
+    const rotated = await rotatePrivateFeedToken({
+      repository,
+      tokenId: issued.token.id,
+      publicationId: "pub_1",
+      now,
+    });
+
+    expect(rotated?.token).toMatchObject({
+      publicationId: "pub_1",
+      showId: "show_1",
+      subscriberId: issued.token.subscriberId,
+      userId: issued.token.userId,
+    });
+    expect(rotated?.feedUrl).toBeUndefined();
+  });
+
   it("builds a private feed from a raw token and records access decisions", async () => {
     const repository = new InMemoryPodcastRepository({
       shows: [show({ defaultAccessRule: { kind: "private_token" } })],
@@ -297,6 +322,53 @@ describe("private feed token service", () => {
       kind: "access_granted",
       tokenId: issued.token.id,
       reason: "allowed_private_token",
+    });
+  });
+
+  it("audits denied requests for known tokens and records unknown-token probes", async () => {
+    const repository = new InMemoryPodcastRepository({
+      shows: [show({ defaultAccessRule: { kind: "private_token" } })],
+      episodes: [episode()],
+    });
+    const issued = await issuePrivateFeedToken({
+      repository,
+      publicationId: "pub_1",
+      show: show(),
+      now,
+    });
+    const missingShow = await buildPrivatePodcastFeed({
+      repository,
+      showSlug: "missing",
+      rawToken: issued.rawToken,
+      generatedAt: now,
+    });
+    const unknownToken = await buildPrivatePodcastFeed({
+      repository,
+      showSlug: "main",
+      rawToken: "not-a-real-token",
+      generatedAt: now,
+    });
+
+    expect(missingShow).toMatchObject({
+      allowed: false,
+      status: 404,
+      reason: "show_not_found",
+    });
+    expect(repository.auditEvents.at(-1)).toMatchObject({
+      kind: "access_denied",
+      tokenId: issued.token.id,
+      reason: "show_not_found",
+    });
+    expect(unknownToken).toMatchObject({
+      allowed: false,
+      status: 401,
+      reason: "token_not_found",
+    });
+    expect(repository.deniedProbes.at(-1)).toMatchObject({
+      showSlug: "main",
+      showId: "show_1",
+      reason: "token_not_found",
+      tokenHash: hashPrivateFeedToken("not-a-real-token"),
     });
   });
 
@@ -347,6 +419,7 @@ describe("private feed token service", () => {
 
 class InMemoryPodcastRepository implements PodcastRepository {
   readonly auditEvents: PrivateFeedTokenAuditEvent[] = [];
+  readonly deniedProbes: PrivateFeedDeniedProbe[] = [];
   private readonly shows = new Map<string, PodcastShow>();
   private readonly episodes = new Map<string, PodcastEpisode[]>();
   private readonly tokens = new Map<string, PrivateFeedToken>();
@@ -386,5 +459,9 @@ class InMemoryPodcastRepository implements PodcastRepository {
 
   recordAuditEvent(event: PrivateFeedTokenAuditEvent) {
     this.auditEvents.push(event);
+  }
+
+  recordDeniedFeedProbe(probe: PrivateFeedDeniedProbe) {
+    this.deniedProbes.push(probe);
   }
 }

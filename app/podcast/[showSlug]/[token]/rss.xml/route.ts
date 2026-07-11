@@ -28,7 +28,7 @@ export async function GET(request: Request, props: PrivatePodcastRouteProps) {
     },
   });
 
-  if (!result.allowed || !result.feed) {
+  if (!result.allowed) {
     return new Response(result.reason, {
       status: result.status,
       headers: {

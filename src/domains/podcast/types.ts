@@ -125,6 +125,16 @@ export interface PrivateFeedTokenAuditEvent {
   requestContext?: PrivateFeedRequestContext;
 }
 
+export interface PrivateFeedDeniedProbe {
+  tokenHash: PrivateFeedTokenHash;
+  showSlug: string;
+  tokenId?: PrivateFeedTokenId;
+  showId?: PodcastShowId;
+  reason: string;
+  occurredAt: Date;
+  requestContext?: PrivateFeedRequestContext;
+}
+
 export interface PrivateFeedAccessEvent {
   tokenId: PrivateFeedTokenId;
   showId: PodcastShowId;

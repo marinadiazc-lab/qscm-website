@@ -104,7 +104,7 @@ function getAccountPodcastFeedUrl(metadata: Record<string, unknown> | undefined)
     return metadataFeedUrl;
   }
 
-  return process.env.PRIVATE_PODCAST_FEED_URL;
+  return undefined;
 }
 
 function providerLabel(provider: string): string {
