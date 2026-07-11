@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { authorizeSubscriberAdminSurface } from "@/src/domains/auth";
+import { authorizeAdminShellSurface } from "@/src/domains/auth";
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ const adminNavItems = [
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const auth = await getCurrentAuthSession();
-  const decision = authorizeSubscriberAdminSurface(auth?.user);
+  const decision = authorizeAdminShellSurface(auth?.user);
 
   if (!decision.allowed) {
     if (decision.status === 401) {

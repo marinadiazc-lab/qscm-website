@@ -681,6 +681,28 @@ a {
   overflow-wrap: anywhere;
 }
 
+.admin-private-field {
+  color: #6f2719;
+  font-weight: 700;
+}
+
+.admin-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-action-form {
+  margin: 0;
+}
+
+.admin-action-form .button,
+.admin-action-form .secondary-button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.86rem;
+}
+
 .admin-disabled-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
