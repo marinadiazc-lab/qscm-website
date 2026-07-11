@@ -11,6 +11,12 @@ Create a local `.env.local` file with a Postgres connection string:
 ```bash
 DATABASE_URL=postgres://qscm:qscm@localhost:5432/qscm
 SEED_ADMIN_EMAIL=admin@example.local
+STRIPE_SUPPORTER_PRODUCT_ID=prod_...
+STRIPE_SUPPORTER_MONTHLY_PRICE_ID=price_...
+STRIPE_SUPPORTER_ANNUAL_PRICE_ID=price_...
+STRIPE_FOUNDING_MEMBER_PRODUCT_ID=prod_...
+STRIPE_FOUNDING_MEMBER_MONTHLY_PRICE_ID=price_...
+STRIPE_FOUNDING_MEMBER_ANNUAL_PRICE_ID=price_...
 ```
 
 Do not commit real connection strings or provider credentials. Local `.env*`
@@ -53,7 +59,9 @@ npm run db:seed
 The seed is idempotent. It upserts the `qscm` publication, creates or refreshes
 the admin user from `SEED_ADMIN_EMAIL` (defaulting to `admin@example.local`),
 grants that user the `admin` role, and upserts the `supporter` and
-`founding-member` tiers with monthly and annual prices.
+`founding-member` tiers with monthly and annual prices. When Stripe ids are set,
+the seed stores product ids on tiers and price ids on prices; omitted price ids
+leave that interval unavailable for checkout until a product owner maps it.
 
 ## Local Verification
 
@@ -70,7 +78,7 @@ The initial schema includes:
 - identity: users, roles, OAuth/email accounts, sessions, magic links, account-linking records
 - subscribers: subscriber lifecycle status, preferences, email provider sync state,
   send intents, broadcasts, provider events, and delivery logs
-- subscriptions: tiers, prices, Stripe/free/gift/admin-comped subscriptions, entitlement grants
+- subscriptions: billing customers, tiers, historical prices, Stripe/free/gift/admin-comped subscriptions, entitlement grants
 - content overlays: publication records, MDX metadata, source path/hash, access rules, overlays
 - engagement: private comment fields, moderation audit entries, persisted likes, share events, anonymous actor hashes
 - podcast/media: media assets, shows, episodes, private feed token hashes, token audit events

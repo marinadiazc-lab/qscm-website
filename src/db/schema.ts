@@ -548,6 +548,38 @@ export const emailProviderEvents = pgTable(
   }),
 );
 
+export const billingCustomers = pgTable(
+  "billing_customers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => publications.id, { onDelete: "cascade" }),
+    subscriberId: uuid("subscriber_id").references(() => subscribers.id, {
+      onDelete: "set null",
+    }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    provider: text("provider").notNull(),
+    providerCustomerId: text("provider_customer_id").notNull(),
+    email: text("email").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    providerCustomerUnique: uniqueIndex("billing_customers_provider_customer_unique").on(
+      table.provider,
+      table.providerCustomerId,
+    ),
+    userProviderUnique: uniqueIndex("billing_customers_user_provider_unique")
+      .on(table.publicationId, table.userId, table.provider)
+      .where(sql`${table.userId} is not null`),
+    subscriberProviderUnique: uniqueIndex("billing_customers_subscriber_provider_unique")
+      .on(table.publicationId, table.subscriberId, table.provider)
+      .where(sql`${table.subscriberId} is not null`),
+  }),
+);
+
 export const subscriptionTiers = pgTable(
   "subscription_tiers",
   {
@@ -562,6 +594,8 @@ export const subscriptionTiers = pgTable(
     sortOrder: integer("sort_order").notNull().default(0),
     defaultGracePeriodDays: integer("default_grace_period_days").notNull().default(0),
     entitlementKeys: text("entitlement_keys").array().notNull().default(sql`'{}'::text[]`),
+    provider: text("provider"),
+    providerProductId: text("provider_product_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -570,6 +604,9 @@ export const subscriptionTiers = pgTable(
       table.publicationId,
       table.slug,
     ),
+    providerProductUnique: uniqueIndex("subscription_tiers_provider_product_unique")
+      .on(table.provider, table.providerProductId)
+      .where(sql`${table.providerProductId} is not null`),
   }),
 );
 
@@ -592,9 +629,13 @@ export const tierPrices = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    tierIntervalUnique: uniqueIndex("tier_prices_tier_interval_unique").on(
+    activeTierIntervalUnique: uniqueIndex("tier_prices_active_tier_interval_unique")
+      .on(table.tierId, table.interval)
+      .where(sql`${table.activeForCheckout} is true`),
+    tierIntervalProviderUnique: uniqueIndex("tier_prices_tier_interval_provider_unique").on(
       table.tierId,
       table.interval,
+      table.providerPriceId,
     ),
     providerPriceUnique: uniqueIndex("tier_prices_provider_price_unique")
       .on(table.provider, table.providerPriceId)
@@ -1082,6 +1123,7 @@ export const auditLogs = pgTable(
 export type Publication = typeof publications.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
+export type BillingCustomer = typeof billingCustomers.$inferSelect;
 export type EmailBroadcastRecord = typeof emailBroadcasts.$inferSelect;
 export type EmailSendIntentRecord = typeof emailSendIntents.$inferSelect;
 export type EmailDeliveryLogRecord = typeof emailDeliveryLogs.$inferSelect;

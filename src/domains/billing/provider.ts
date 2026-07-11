@@ -3,14 +3,20 @@ import type {
   CheckoutSessionCreateResult,
   CustomerPortalCreateInput,
   CustomerPortalCreateResult,
+  StripeCustomerCreateInput,
+  StripeCustomerCreateResult,
+  StripeSubscriptionRecord,
   WebhookProcessInput,
   WebhookProcessResult,
 } from "./types";
 
 export interface BillingProvider {
+  createCustomer(input: StripeCustomerCreateInput): Promise<StripeCustomerCreateResult>;
   createCheckoutSession(input: CheckoutSessionCreateInput): Promise<CheckoutSessionCreateResult>;
   createCustomerPortalSession(input: CustomerPortalCreateInput): Promise<CustomerPortalCreateResult>;
   processWebhookEvent(input: WebhookProcessInput): Promise<WebhookProcessResult>;
+  retrieveSubscription?(subscriptionId: string): Promise<StripeSubscriptionRecord>;
+  listSubscriptionsForCustomer?(customerId: string): Promise<StripeSubscriptionRecord[]>;
 }
 
 export class BillingProviderNotConfiguredError extends Error {
@@ -24,6 +30,9 @@ export class BillingProviderNotConfiguredError extends Error {
 
 export function createNotConfiguredStripeProvider(): BillingProvider {
   return {
+    async createCustomer() {
+      throw new BillingProviderNotConfiguredError("customer creation");
+    },
     async createCheckoutSession() {
       throw new BillingProviderNotConfiguredError("checkout session creation");
     },

@@ -24,8 +24,8 @@ export default async function SubscribePage({ searchParams }: SubscribePageProps
         <p className="badge">Subscribe</p>
         <h1 className="page-title">Choose a subscription path</h1>
         <p className="lede">
-          Join the free list now. Paid tier checkout will attach to the same
-          subscriber record when billing is ready.
+          Join the free list or start paid access through server-created Stripe
+          checkout. Local subscription state remains the source of truth.
         </p>
       </header>
       {subscribed ? (
