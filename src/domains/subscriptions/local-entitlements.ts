@@ -1,11 +1,12 @@
 import type {
   EntitlementKey,
-  SubscriptionStatus,
   TierId,
 } from "./types";
-import type {
-  SubscriptionEntitlementState,
-  SubscriptionTierChange,
+import {
+  decideSubscriptionEntitlement,
+  type EntitlementPolicy,
+  type SubscriptionEntitlementState,
+  type SubscriptionTierChange,
 } from "./entitlements";
 
 export interface LocalEntitlementGrantRow {
@@ -37,6 +38,8 @@ export interface LocalEntitlementGrantState {
   revokedGrantIds: string[];
   accessEndsAt: Date | null;
 }
+
+export interface LocalEntitlementMergeOptions extends EntitlementPolicy {}
 
 export function selectLocalEntitlementGrantState(
   rows: readonly LocalEntitlementGrantRow[],
@@ -81,15 +84,16 @@ export function projectLocalEntitlementGrantState(input: {
 export function mergeSubscriptionAndEntitlementGrants(
   subscription: SubscriptionEntitlementState | null,
   grants: LocalEntitlementGrantState,
+  options: LocalEntitlementMergeOptions = {},
 ): SubscriptionEntitlementState | null {
   if (!subscription && grants.entitlementKeys.length === 0) {
     return null;
   }
 
-  const status = grants.entitlementKeys.length > 0 && isGrantOverrideStatus(subscription?.status)
-    ? "comped"
-    : subscription?.status;
-  const grantOverridesSubscription = status === "comped" && subscription?.status !== "comped";
+  const grantOverridesSubscription =
+    grants.entitlementKeys.length > 0 &&
+    !decideSubscriptionEntitlement(subscription, options).allowed;
+  const status = grantOverridesSubscription ? "comped" : subscription?.status;
 
   return {
     ...(subscription ?? {}),
@@ -106,6 +110,9 @@ export function mergeSubscriptionAndEntitlementGrants(
           ...(subscription?.entitlementKeys ?? []),
           ...grants.entitlementKeys,
         ]),
+    scheduledTierChange: grantOverridesSubscription
+      ? undefined
+      : subscription?.scheduledTierChange,
     compedGrantIds: grants.compedGrantIds,
     revokedGrantIds: grants.revokedGrantIds,
     accessEndsAt: grantOverridesSubscription
@@ -175,10 +182,6 @@ function isLocalEntitlementGrantForSubject(
     row.userId === lookup.userId ||
     (row.subscriberId ? lookup.subscriberIds.includes(row.subscriberId) : false)
   );
-}
-
-function isGrantOverrideStatus(status: SubscriptionStatus | undefined) {
-  return !status || ["free", "expired", "incomplete", "incomplete_expired", "paused"].includes(status);
 }
 
 function earliestDate(dates: readonly (Date | null)[]) {

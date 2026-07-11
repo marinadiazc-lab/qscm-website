@@ -42,7 +42,7 @@ export async function getLocalSubscriptionEntitlementForUser(
   ]);
 
   return {
-    subscription: mergeSubscriptionAndEntitlementGrants(subscription, grants),
+    subscription: mergeSubscriptionAndEntitlementGrants(subscription, grants, { now }),
     isFreeSubscriber: subscriberIds.length > 0,
   };
 }
