@@ -39,7 +39,7 @@ The moderation domain includes reusable checks for launch-time abuse controls:
 
 Request context must pass hashed identifiers only. Raw IP addresses and raw email addresses should not be stored in moderation context or audit metadata. `ENGAGEMENT_HASH_SALT` is required in production so persisted email, IP, user-agent, session, and anonymous actor hashes are not derived from the public development salt.
 
-For #198, production rate limits count persisted comment, share, and like records through the engagement repository, so the configured database is the shared store across server processes. Local no-database rendering still uses the in-memory repository and process-local scoped store.
+For #198, production rate limits record valid comment, share, and like attempts in `engagement_rate_limit_events` before persistence side effects, so IP/email/user/anonymous scopes and duplicate like attempts are counted through the configured database across server processes. Local no-database rendering still uses the in-memory repository and process-local scoped store.
 
 ## Moderator Queue Contract
 
@@ -50,4 +50,4 @@ The admin comment queue exposes approve, reject, and delete actions. Approve set
 ## Follow-ups
 
 - #191: wire the production email provider, durable share intents, dedupe, sender identity, and private recipient storage policy.
-- Rate-limit follow-up: add a separate pre-write attempt table if launches need durable counting for rejected invalid submissions as well as persisted engagement events.
+- Rate-limit follow-up: add retention cleanup for old `engagement_rate_limit_events` rows once production traffic patterns are known.

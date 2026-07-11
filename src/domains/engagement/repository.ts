@@ -43,11 +43,23 @@ export type EngagementRateLimitScope = {
   registeredUserId?: string;
 };
 
+export type RecordRateLimitAttemptInput = {
+  action: string;
+  scope: EngagementRateLimitScope;
+  now: Date;
+};
+
 export interface EngagementRepository {
   postExists(postSlug: string): Promise<boolean>;
   listApprovedComments(postSlug: string): Promise<EngagementComment[]>;
   listModerationQueue(status?: ModerationStatus): Promise<ModerationQueueItem[]>;
   storeComment(input: StoreCommentInput): Promise<EngagementComment | undefined>;
+  recordRateLimitAttempt(input: RecordRateLimitAttemptInput): Promise<void>;
+  countRecentRateLimitAttempts(
+    action: string,
+    scope: EngagementRateLimitScope,
+    since: Date,
+  ): Promise<number>;
   countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number>;
   countRecentShares(scope: EngagementRateLimitScope, since: Date): Promise<number>;
   countRecentLikes(scope: EngagementRateLimitScope, since: Date): Promise<number>;
@@ -193,6 +205,47 @@ export class PostgresEngagementRepository implements EngagementRepository {
     }
 
     return toPublicComment(input.postSlug, comment);
+  }
+
+  async recordRateLimitAttempt(input: RecordRateLimitAttemptInput): Promise<void> {
+    await this.db.insert(schema.engagementRateLimitEvents).values({
+      action: input.action,
+      postSlug: input.scope.postSlug,
+      anonymousActorHash: input.scope.anonymousActorHash,
+      ipHash: input.scope.ipHash,
+      emailHash: input.scope.emailHash,
+      registeredUserId: input.scope.registeredUserId,
+      createdAt: input.now,
+    });
+  }
+
+  async countRecentRateLimitAttempts(
+    action: string,
+    scope: EngagementRateLimitScope,
+    since: Date,
+  ): Promise<number> {
+    const scopeConditions = rateLimitEventScopeConditions(scope);
+    let maxCount = 0;
+
+    for (const condition of scopeConditions) {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(schema.engagementRateLimitEvents)
+        .where(
+          and(
+            eq(schema.engagementRateLimitEvents.action, action),
+            gte(schema.engagementRateLimitEvents.createdAt, since),
+            scope.postSlug
+              ? eq(schema.engagementRateLimitEvents.postSlug, scope.postSlug)
+              : undefined,
+            condition,
+          ),
+        );
+
+      maxCount = Math.max(maxCount, row?.value ?? 0);
+    }
+
+    return maxCount;
   }
 
   async countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number> {
@@ -411,6 +464,7 @@ export class InMemoryEngagementRepository implements EngagementRepository {
   private readonly likes = new Set<string>();
   private readonly likeEvents: { actorHash: string; postSlug: string; createdAt: Date }[] = [];
   private readonly shares: StoreShareInput[] = [];
+  private readonly rateLimitEvents: RecordRateLimitAttemptInput[] = [];
   private nextId = 1;
 
   constructor(postSlugs: readonly string[] = []) {
@@ -449,6 +503,26 @@ export class InMemoryEngagementRepository implements EngagementRepository {
     const stored = { ...input, id: `comment_${this.nextId++}` };
     this.comments.push(stored);
     return storedInputToComment(stored.id, stored);
+  }
+
+  async recordRateLimitAttempt(input: RecordRateLimitAttemptInput): Promise<void> {
+    this.rateLimitEvents.push({
+      action: input.action,
+      scope: { ...input.scope },
+      now: input.now,
+    });
+  }
+
+  async countRecentRateLimitAttempts(
+    action: string,
+    scope: EngagementRateLimitScope,
+    since: Date,
+  ): Promise<number> {
+    return maxCountByScope(
+      this.rateLimitEvents.filter((event) => event.action === action && event.now >= since),
+      scope,
+      (event) => event.scope,
+    );
   }
 
   async countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number> {
@@ -612,6 +686,30 @@ function shareScopeConditions(scope: EngagementRateLimitScope) {
   }
   if (scope.registeredUserId) {
     conditions.push(eq(schema.postShares.userId, scope.registeredUserId));
+  }
+  if (conditions.length === 0 && scope.postSlug) {
+    conditions.push(sql`true`);
+  }
+
+  return conditions;
+}
+
+function rateLimitEventScopeConditions(scope: EngagementRateLimitScope) {
+  const conditions: SQL[] = [];
+
+  if (scope.anonymousActorHash) {
+    conditions.push(
+      eq(schema.engagementRateLimitEvents.anonymousActorHash, scope.anonymousActorHash),
+    );
+  }
+  if (scope.ipHash) {
+    conditions.push(eq(schema.engagementRateLimitEvents.ipHash, scope.ipHash));
+  }
+  if (scope.emailHash) {
+    conditions.push(eq(schema.engagementRateLimitEvents.emailHash, scope.emailHash));
+  }
+  if (scope.registeredUserId) {
+    conditions.push(eq(schema.engagementRateLimitEvents.registeredUserId, scope.registeredUserId));
   }
   if (conditions.length === 0 && scope.postSlug) {
     conditions.push(sql`true`);

@@ -120,7 +120,6 @@ export class EngagementService {
       "comment",
       moderationInput,
       this.commentRateLimit,
-      (scope, since) => this.repository.countRecentComments(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -183,6 +182,18 @@ export class EngagementService {
   }
 
   async likePost(input: LikePostInput): Promise<LikePostResult> {
+    if (!(await this.repository.postExists(input.postSlug))) {
+      return {
+        ok: false,
+        status: "not_found",
+        message: "That post could not be found.",
+      };
+    }
+
+    const requestContext = sanitizeEngagementRequestContext({
+      ...input.requestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
+    });
     const rateLimit = await this.checkRateLimit(
       "like",
       {
@@ -191,10 +202,9 @@ export class EngagementService {
         commenterName: "",
         registeredUserId: registeredUserId(input.actor),
         submittedAt: this.now(),
-        requestContext: sanitizeEngagementRequestContext(input.requestContext),
+        requestContext,
       },
       this.likeRateLimit,
-      (scope, since) => this.repository.countRecentLikes(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -248,7 +258,6 @@ export class EngagementService {
       "share_email",
       moderationInput,
       this.emailShareRateLimit,
-      (scope, since) => this.repository.countRecentShares(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -340,7 +349,6 @@ export class EngagementService {
     action: string,
     input: EngagementModerationInput,
     limit: { windowSeconds: number; maxAttempts: number },
-    countRecent: (scope: EngagementRateLimitScope, since: Date) => Promise<number>,
   ) {
     if (this.scopedRateLimitStore) {
       const scopedDecision = createScopedRateLimitCheck({
@@ -367,9 +375,22 @@ export class EngagementService {
 
     const now = this.now();
     const since = new Date(now.getTime() - limit.windowSeconds * 1000);
-    const actorCount = hasRateLimitScope(actorScope) ? await countRecent(actorScope, since) : 0;
+    const attemptScope: EngagementRateLimitScope = {
+      ...actorScope,
+      ...(input.postSlug ? { postSlug: input.postSlug } : {}),
+    };
 
-    if (actorCount >= limit.maxAttempts) {
+    await this.repository.recordRateLimitAttempt({
+      action,
+      scope: attemptScope,
+      now,
+    });
+
+    const actorCount = hasRateLimitScope(actorScope)
+      ? await this.repository.countRecentRateLimitAttempts(action, actorScope, since)
+      : 0;
+
+    if (actorCount > limit.maxAttempts) {
       return {
         limited: true as const,
         retryAfterSeconds: limit.windowSeconds,
@@ -377,8 +398,8 @@ export class EngagementService {
     }
 
     if (postScope) {
-      const postCount = await countRecent(postScope, since);
-      if (postCount >= postRateLimitMaxAttempts(limit.maxAttempts)) {
+      const postCount = await this.repository.countRecentRateLimitAttempts(action, postScope, since);
+      if (postCount > postRateLimitMaxAttempts(limit.maxAttempts)) {
         return {
           limited: true as const,
           retryAfterSeconds: limit.windowSeconds,
@@ -413,6 +434,7 @@ function normalizeCommentInput(
     honeypot: input.honeypot?.trim(),
     requestContext: sanitizeEngagementRequestContext({
       ...baseRequestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
       ...(honeypotFilled ? { honeypotFilled: true } : {}),
       emailHash: email ? hashIdentifier(email) : baseRequestContext?.emailHash,
     }),
@@ -492,6 +514,7 @@ function normalizeShareInput(
     honeypot: input.honeypot?.trim(),
     requestContext: sanitizeEngagementRequestContext({
       ...baseRequestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
       ...(honeypotFilled ? { honeypotFilled: true } : {}),
       emailHash: recipientEmail ? hashIdentifier(recipientEmail) : baseRequestContext?.emailHash,
     }),

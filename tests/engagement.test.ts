@@ -282,6 +282,73 @@ describe("engagement service", () => {
     });
   });
 
+  it("rate limits anonymous likes by IP hash when the actor cookie changes", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 1 },
+      scopedRateLimitStore: null,
+    });
+
+    expect(
+      await service.likePost({
+        postSlug: "welcome",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_ip_1" },
+        requestContext: {
+          anonymousActorHash: "actor_hash_ip_1",
+          ipHash: "ip_hash_1",
+        },
+      }),
+    ).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(
+      await service.likePost({
+        postSlug: "scheduled-briefing",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_ip_2" },
+        requestContext: {
+          anonymousActorHash: "actor_hash_ip_2",
+          ipHash: "ip_hash_1",
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
+  it("rate limits repeated duplicate likes as attempts", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 2 },
+      scopedRateLimitStore: null,
+    });
+
+    const input = {
+      postSlug: "welcome",
+      actor,
+      requestContext: {
+        anonymousActorHash: actor.anonymousActorHash,
+        ipHash: "ip_hash_duplicate",
+      },
+    };
+
+    expect(await service.likePost(input)).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(await service.likePost(input)).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(await service.likePost(input)).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
   it("records email shares without a provider and queues through the email interface when supplied", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
     const emailProvider = new InMemoryEmailProvider({ now: () => now });

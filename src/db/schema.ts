@@ -900,6 +900,40 @@ export const postShares = pgTable(
   }),
 );
 
+export const engagementRateLimitEvents = pgTable(
+  "engagement_rate_limit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    action: text("action").notNull(),
+    postSlug: text("post_slug"),
+    anonymousActorHash: text("anonymous_actor_hash"),
+    ipHash: text("ip_hash"),
+    emailHash: text("email_hash"),
+    registeredUserId: uuid("registered_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    actionCreatedAtIdx: index("engagement_rate_limit_events_action_created_idx").on(
+      table.action,
+      table.createdAt,
+    ),
+    postActionIdx: index("engagement_rate_limit_events_post_action_idx").on(
+      table.postSlug,
+      table.action,
+    ),
+    anonymousActorIdx: index("engagement_rate_limit_events_actor_idx").on(
+      table.anonymousActorHash,
+    ),
+    ipIdx: index("engagement_rate_limit_events_ip_idx").on(table.ipHash),
+    emailIdx: index("engagement_rate_limit_events_email_idx").on(table.emailHash),
+    registeredUserIdx: index("engagement_rate_limit_events_user_idx").on(
+      table.registeredUserId,
+    ),
+  }),
+);
+
 export const mediaAssets = pgTable(
   "media_assets",
   {
@@ -1133,5 +1167,6 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type EntitlementGrant = typeof entitlementGrants.$inferSelect;
 export type PostMetadata = typeof postMetadata.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
+export type EngagementRateLimitEvent = typeof engagementRateLimitEvents.$inferSelect;
 export type PodcastShow = typeof podcastShows.$inferSelect;
 export type PodcastEpisode = typeof podcastEpisodes.$inferSelect;
