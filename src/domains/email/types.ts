@@ -336,6 +336,7 @@ export type EmailProviderEvent = {
 
 export type SendEmailBroadcastInput = {
   broadcastId: EmailBroadcastId;
+  providerBroadcastId?: string;
   intent: EmailSendIntentReference;
   scheduledAt?: Date;
   metadata?: EmailMetadata;

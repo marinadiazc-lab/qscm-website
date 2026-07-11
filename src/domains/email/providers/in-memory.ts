@@ -260,11 +260,14 @@ export class InMemoryEmailProvider implements EmailProvider {
   }
 
   async sendBroadcast(input: SendEmailBroadcastInput): Promise<EmailSendResult> {
-    const broadcast = this.broadcasts.get(input.broadcastId);
+    const broadcast = this.broadcasts.get(input.providerBroadcastId ?? input.broadcastId)
+      ?? Array.from(this.broadcasts.values()).find(
+        (storedBroadcast) => storedBroadcast.providerBroadcastId === input.providerBroadcastId,
+      );
 
     if (!broadcast) {
       throw new EmailProviderError(
-        `InMemoryEmailProvider could not find broadcast ${input.broadcastId}.`,
+        `InMemoryEmailProvider could not find broadcast ${input.providerBroadcastId ?? input.broadcastId}.`,
         this.key,
       );
     }

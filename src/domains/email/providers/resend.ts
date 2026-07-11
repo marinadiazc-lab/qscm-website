@@ -300,11 +300,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const segmentId = input.target.segmentIds?.[0] ?? input.target.audienceIds?.[0];
-
-    if (!segmentId) {
-      throw new EmailProviderError("Resend broadcasts require a segment or audience target.", this.key);
-    }
+    const segmentId = singleBroadcastTargetId(input.target);
 
     if (!this.client.broadcasts?.create) {
       throw new EmailProviderError(
@@ -363,7 +359,8 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const response = await this.client.broadcasts.send(input.broadcastId);
+    const providerBroadcastId = input.providerBroadcastId ?? input.broadcastId;
+    const response = await this.client.broadcasts.send(providerBroadcastId);
 
     if (response?.error) {
       throw resendError("send broadcast", response.error);
@@ -376,7 +373,7 @@ export class ResendEmailProvider implements EmailProvider {
       status: "sent",
       accepted: true,
       broadcastId: input.broadcastId,
-      providerBroadcastId: response?.data?.id ?? input.broadcastId,
+      providerBroadcastId: response?.data?.id ?? providerBroadcastId,
       sentAt: this.now(),
     };
   }
@@ -486,6 +483,24 @@ function parseAddressEnv(value: string | undefined): EmailAddressWithName {
   }
 
   return { email: value.trim() };
+}
+
+function singleBroadcastTargetId(target: CreateEmailBroadcastInput["target"]) {
+  const segmentIds = target.segmentIds ?? [];
+  const unsupportedDirectTargets = [
+    ...(target.audienceIds ?? []),
+    ...(target.subscriberIds ?? []),
+    ...(target.excludeSubscriberIds ?? []),
+  ];
+
+  if (segmentIds.length !== 1 || unsupportedDirectTargets.length > 0) {
+    throw new EmailProviderError(
+      "Resend broadcasts require exactly one segment target. Configure a broadcast segment that matches the intended audience.",
+      "resend",
+    );
+  }
+
+  return segmentIds[0]!;
 }
 
 function toResendTags(tags: string[] | undefined, metadata: Record<string, unknown> | undefined) {
