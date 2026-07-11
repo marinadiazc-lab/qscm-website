@@ -559,6 +559,32 @@ describe("newsletter broadcasts", () => {
     expect(broadcast?.target).toEqual({ segmentIds: ["tier:founding"] });
   });
 
+  it("maps multi-tier posts to one combined tier segment target", () => {
+    const broadcast = createNewsletterBroadcastFromPost(
+      post({
+        visibility: "specific_tiers",
+        accessRequirement: {
+          visibility: "specific_tiers",
+          rule: "specific_tiers",
+          requiresAuthentication: true,
+          requiresPaidSubscription: true,
+          allowedTierIds: ["founding", "patron"],
+        },
+        tierIds: ["patron", "founding"],
+      }),
+      {
+        siteName: "QSCM",
+        siteUrl: "https://qscm.example",
+        defaultPublicationId: "pub_1",
+        tierSegmentIds: {
+          "founding+patron": "seg_founders_and_patrons",
+        },
+      },
+    );
+
+    expect(broadcast?.target).toEqual({ segmentIds: ["seg_founders_and_patrons"] });
+  });
+
   it("persists local broadcast and send records around provider calls", async () => {
     const broadcastRepository = new InMemoryEmailBroadcastRepository(() => now);
     const sendIntentRepository = new InMemoryEmailSendIntentRepository(() => now);
@@ -597,8 +623,23 @@ describe("newsletter broadcasts", () => {
     expect(result).toMatchObject({
       accepted: true,
       broadcastId: draft!.id,
+      dedupeKey: `broadcast:${draft!.id}:send`,
       status: "sent",
     });
+
+    const duplicate = await broadcastService.sendBroadcast({
+      publicationId: "pub_1",
+      broadcastId: draft!.id,
+      dedupeKey: "broadcast:welcome:manual-retry",
+    });
+
+    expect(duplicate).toMatchObject({
+      accepted: false,
+      broadcastId: draft!.id,
+      dedupeKey: `broadcast:${draft!.id}:send`,
+      status: "skipped_duplicate",
+    });
+    expect(provider.listSentResults()).toHaveLength(1);
     expect(await broadcastRepository.listBroadcasts({ publicationId: "pub_1" })).toMatchObject([
       {
         id: draft!.id,
@@ -606,13 +647,16 @@ describe("newsletter broadcasts", () => {
         providerBroadcastId: expect.any(String),
       },
     ]);
-    expect(await sendIntentRepository.listIntents({ broadcastId: draft!.id })).toMatchObject([
+    const intents = await sendIntentRepository.listIntents({ broadcastId: draft!.id });
+    expect(intents).toMatchObject([
       {
+        dedupeKey: `broadcast:${draft!.id}:send`,
         kind: "broadcast",
         status: "sent",
         providerBroadcastId: expect.any(String),
       },
     ]);
+    expect(intents).toHaveLength(1);
   });
 });
 

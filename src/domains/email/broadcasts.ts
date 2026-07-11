@@ -67,13 +67,34 @@ function targetForPost(
 ): EmailBroadcastTarget {
   if (audience === "specific_tiers") {
     return {
-      segmentIds: post.tierIds
-        .map((tierId) => options.tierSegmentIds?.[tierId] ?? `tier:${tierId}`)
-        .filter((segmentId): segmentId is string => Boolean(segmentId)),
+      segmentIds: [tierAudienceSegmentId(post.tierIds, options)],
     };
   }
 
   return { segmentIds: [options.broadcastSegmentIds?.[audience] ?? audience] };
+}
+
+function tierAudienceSegmentId(
+  tierIds: readonly string[],
+  options: NewsletterBroadcastOptions,
+) {
+  const normalizedTierIds = unique(tierIds.map((tierId) => tierId.trim()).filter(Boolean)).sort();
+
+  if (normalizedTierIds.length === 0) {
+    return options.tierSegmentIds?.specific_tiers ?? "specific_tiers";
+  }
+
+  if (normalizedTierIds.length === 1) {
+    const tierId = normalizedTierIds[0]!;
+    return options.tierSegmentIds?.[tierId] ?? `tier:${tierId}`;
+  }
+
+  const combinedKey = normalizedTierIds.join("+");
+  return (
+    options.tierSegmentIds?.[combinedKey] ??
+    options.tierSegmentIds?.[`tiers:${combinedKey}`] ??
+    `tiers:${combinedKey}`
+  );
 }
 
 function resolveNewsletterAudience(post: PostSummary): NewsletterAudience {
@@ -261,6 +282,7 @@ export class EmailBroadcastService {
 
     const result = await this.sendService.sendBroadcast({
       ...input,
+      dedupeKey: broadcastSendDedupeKey(broadcast),
       providerBroadcastId: broadcast.providerBroadcastId,
     });
 
@@ -283,10 +305,18 @@ export class EmailBroadcastService {
   }
 }
 
+function broadcastSendDedupeKey(broadcast: EmailBroadcast) {
+  return `broadcast:${broadcast.id}:send`;
+}
+
 function compactMetadata(metadata: EmailMetadata) {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== null),
   ) as EmailMetadata;
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values));
 }
 
 function cloneBroadcast(broadcast: EmailBroadcast): EmailBroadcast {

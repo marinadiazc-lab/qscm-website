@@ -93,8 +93,8 @@ changing post visibility behavior.
 `createNewsletterBroadcastFromPost` converts a published post into a
 `CreateEmailBroadcastInput`. Audience targeting starts from post visibility:
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
-posts map tier ids to configured segment ids, falling back to stable
-`tier:<tierId>` segment keys when provider ids are not configured. Free
+posts map to one configured segment per exact tier set, falling back to stable
+`tier:<tierId>` or `tiers:<tierId+otherTierId>` segment keys when provider ids are not configured. Free
 subscriber posts target one configured broadcast segment that must include both
 free and paid subscribers, matching the server access rule that paid
 subscribers can read free subscriber content. The Resend adapter rejects
