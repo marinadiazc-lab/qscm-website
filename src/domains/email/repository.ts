@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbClient } from "@/src/db";
-import { db, schema } from "@/src/db";
+import { db as defaultDb, schema } from "@/src/db";
 import type {
   EmailProviderEventClaimResult,
   EmailProviderEventRepository,
@@ -18,7 +18,7 @@ import type { EmailSendIntentRepository } from "./send-intents";
 export class DrizzleEmailSendIntentRepository
   implements EmailSendIntentRepository, EmailProviderEventRepository
 {
-  constructor(private readonly db: DbClient = db) {}
+  constructor(private readonly db: DbClient = defaultDb) {}
 
   async createOrGet(input: CreateEmailSendIntentInput): Promise<EmailSendIntent> {
     const inserted = await this.db
