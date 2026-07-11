@@ -371,6 +371,12 @@ a {
   margin: 0;
 }
 
+.account-card input[readonly] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .detail-list {
   display: grid;
   gap: 12px;

@@ -25,6 +25,7 @@ export default async function AccountPage({
   const error = first(params.error);
   const providers = listOAuthProviderConfigs();
   const linkedProviders = new Set(auth.accounts.map((account) => account.provider));
+  const podcastFeedUrl = getAccountPodcastFeedUrl(auth.user.metadata);
 
   return (
     <main className="page account-page">
@@ -121,9 +122,16 @@ export default async function AccountPage({
 
         <article className="account-card">
           <h2>Podcast feed</h2>
-          <p className="muted">
-            Private feed controls will appear here after podcast entitlement data is wired.
-          </p>
+          {podcastFeedUrl ? (
+            <>
+              <p className="muted">Use this private RSS URL in your podcast app.</p>
+              <input className="text-input" readOnly value={podcastFeedUrl} />
+            </>
+          ) : (
+            <p className="muted">
+              Private feed controls will appear here after podcast token issuance is wired.
+            </p>
+          )}
         </article>
       </section>
     </main>
@@ -132,6 +140,16 @@ export default async function AccountPage({
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function getAccountPodcastFeedUrl(metadata: Record<string, unknown> | undefined) {
+  const metadataFeedUrl = metadata?.privatePodcastFeedUrl;
+
+  if (typeof metadataFeedUrl === "string" && metadataFeedUrl.startsWith("https://")) {
+    return metadataFeedUrl;
+  }
+
+  return undefined;
 }
 
 function providerLabel(provider: string): string {
