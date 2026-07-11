@@ -23,7 +23,7 @@ Launch checks currently include:
 
 Honeypot inputs are converted to boolean abuse signals before persistence. Raw honeypot payloads, raw IP addresses, and raw email addresses should not be stored in moderation context or audit metadata.
 
-Suspicious comments are persisted with private fields and moderation audit entries so a moderation queue can read them. This PR intentionally does not build the broad admin dashboard or admin-auth enforcement; that remains M12/follow-up scope. Until moderator authentication is attached, queue access should stay server-internal or behind a separate guarded route.
+Suspicious comments are persisted with private fields and moderation audit entries so the guarded moderation queue can read them. `/admin/comments` and its moderation action routes require an active user with the `moderator` or `admin` role.
 
 Registered-user actors are resolved from the current auth session when one is available, while anonymous readers use the privacy-preserving actor cookie. Subscriber-specific engagement UI states remain follow-up work until a subscriber resolver is wired.
 
@@ -45,10 +45,9 @@ For #198, the engagement runtime shares one process-local scoped rate-limit stor
 
 Suspicious comments are available through the repository/service queue methods and retain private fields for moderator-only review. Public list methods only return approved comments. Manual or system moderation transitions append audit entries when comments are approved, blocked, removed, or restored to public visibility.
 
-The admin-authenticated queue UI and approve/reject/delete actions remain tracked in #192. Moderator screens must label email, website, IP hash, email hash, and session/user-agent hashes as private abuse-review fields.
+The admin comment queue exposes approve, reject, and delete actions. Approve sets the comment to `approved` and stamps `publishedAt` immediately; reject sets `blocked` and clears `publishedAt`; delete sets `removed` and clears `publishedAt`. The queue labels commenter email, website, and registered-user id as private moderator-only fields. Moderator screens must continue to label any future IP hash, email hash, and session/user-agent hashes as private abuse-review fields.
 
 ## Follow-ups
 
 - #191: wire the production email provider, durable share intents, dedupe, sender identity, and private recipient storage policy.
-- #192: attach moderator/admin auth and queue actions.
 - #198 follow-up: replace process-local scoped rate limits with durable shared storage if production deployment needs cross-instance enforcement.

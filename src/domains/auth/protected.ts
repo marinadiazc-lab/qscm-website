@@ -16,6 +16,26 @@ export function authorizeAdminSurface(
   return authorizeRoleSurface(user, ["admin"], "The admin role is required.");
 }
 
+export function authorizeAdminShellSurface(
+  user: AuthUser | undefined | null,
+): ProtectedRouteDecision {
+  return authorizeRoleSurface(
+    user,
+    ["admin", "support", "editor", "moderator"],
+    "The admin, support, editor, or moderator role is required.",
+  );
+}
+
+export function authorizeModerationSurface(
+  user: AuthUser | undefined | null,
+): ProtectedRouteDecision {
+  return authorizeRoleSurface(
+    user,
+    ["admin", "moderator"],
+    "The admin or moderator role is required.",
+  );
+}
+
 export function authorizeSubscriberAdminSurface(
   user: AuthUser | undefined | null,
 ): ProtectedRouteDecision {
