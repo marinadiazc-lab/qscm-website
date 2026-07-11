@@ -25,7 +25,7 @@ Honeypot inputs are converted to boolean abuse signals before persistence. Raw h
 
 Suspicious comments are persisted with private fields and moderation audit entries so a moderation queue can read them. This PR intentionally does not build the broad admin dashboard or admin-auth enforcement; that remains M12/follow-up scope. Until moderator authentication is attached, queue access should stay server-internal or behind a separate guarded route.
 
-Registered-user and subscriber actors are modeled in the service/repository layer, but the current request runtime only has anonymous cookies available. Do not treat authenticated or subscriber engagement UI states as complete until a current-session/subscriber resolver is wired.
+Registered-user actors are resolved from the current auth session when one is available, while anonymous readers use the privacy-preserving actor cookie. Subscriber-specific engagement UI states remain follow-up work until a subscriber resolver is wired.
 
 AI moderation is still a hook shape only. A later provider can return categories, confidence, model metadata, and an allow/suspicious/block outcome without changing comment creation semantics.
 

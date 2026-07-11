@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { getPostBySlug } from "../src/content/posts";
 import { InMemoryEmailProvider } from "../src/domains/email";
@@ -6,6 +7,7 @@ import {
   EngagementService,
   InMemoryEngagementRepository,
   type EngagementActor,
+  type EngagementRequestContext,
 } from "../src/domains/engagement";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -62,7 +64,16 @@ describe("engagement service", () => {
 
   it("holds suspicious comments and keeps queue private context for moderators", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
-    const service = new EngagementService(repository, { now: () => now });
+    const service = new EngagementService(repository, {
+      now: () => now,
+      identifierHashSalt: "test-engagement-salt",
+    });
+    const rawContext = {
+      anonymousActorHash: actor.anonymousActorHash,
+      ipHash: "ip_hash",
+      rawIp: "203.0.113.7",
+      rawEmail: "reader@example.com",
+    } as unknown as EngagementRequestContext;
     const result = await service.submitComment({
       postSlug: "welcome",
       body: "Please see my site",
@@ -70,8 +81,9 @@ describe("engagement service", () => {
       email: "reader@example.com",
       website: "https://example.com",
       actor,
-      requestContext: { anonymousActorHash: actor.anonymousActorHash },
+      requestContext: rawContext,
     });
+    const queue = await repository.listModerationQueue();
 
     expect(result).toMatchObject({
       ok: true,
@@ -80,7 +92,7 @@ describe("engagement service", () => {
     expect(await service.getSummary("welcome", actor)).toMatchObject({
       commentCount: 0,
     });
-    expect(await repository.listModerationQueue()).toMatchObject([
+    expect(queue).toMatchObject([
       {
         moderationStatus: "suspicious",
         privateFields: {
@@ -89,6 +101,15 @@ describe("engagement service", () => {
         },
       },
     ]);
+    expect(queue[0]?.requestContext).toEqual({
+      anonymousActorHash: actor.anonymousActorHash,
+      ipHash: "ip_hash",
+      emailHash: createHmac("sha256", "test-engagement-salt")
+        .update("reader@example.com")
+        .digest("hex"),
+    });
+    expect(JSON.stringify(queue[0]?.requestContext)).not.toContain("203.0.113.7");
+    expect(JSON.stringify(queue[0]?.requestContext)).not.toContain("rawEmail");
   });
 
   it("blocks honeypot comments and rate limits repeated comments", async () => {

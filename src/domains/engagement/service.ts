@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import {
   InMemoryRateLimitStore,
   createHoneypotTimingCheck,
@@ -27,6 +27,8 @@ type EngagementModerationInput = ModerationCheckInput & {
   requestContext?: EngagementRequestContext;
 };
 
+type HashIdentifier = (value: string) => string;
+
 export type EngagementServiceOptions = {
   now?: () => Date;
   commentRateLimit?: {
@@ -42,12 +44,14 @@ export type EngagementServiceOptions = {
     maxAttempts: number;
   };
   scopedRateLimitStore?: RateLimitStore;
+  identifierHashSalt?: string;
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const defaultCommentLimit = { windowSeconds: 10 * 60, maxAttempts: 5 };
 const defaultLikeLimit = { windowSeconds: 60, maxAttempts: 20 };
 const defaultEmailShareLimit = { windowSeconds: 60 * 60, maxAttempts: 3 };
+const defaultIdentifierHashSalt = "qscm-dev-engagement-salt";
 const honeypotTimingCheck = createHoneypotTimingCheck();
 const blockedPhrases = ["buy followers", "crypto giveaway", "free money", "casino bonus"];
 
@@ -57,6 +61,7 @@ export class EngagementService {
   private readonly likeRateLimit: Required<EngagementServiceOptions>["likeRateLimit"];
   private readonly emailShareRateLimit: Required<EngagementServiceOptions>["emailShareRateLimit"];
   private readonly scopedRateLimitStore: RateLimitStore;
+  private readonly identifierHashSalt: string;
 
   constructor(
     private readonly repository: EngagementRepository,
@@ -67,6 +72,10 @@ export class EngagementService {
     this.likeRateLimit = options.likeRateLimit ?? defaultLikeLimit;
     this.emailShareRateLimit = options.emailShareRateLimit ?? defaultEmailShareLimit;
     this.scopedRateLimitStore = options.scopedRateLimitStore ?? new InMemoryRateLimitStore();
+    this.identifierHashSalt =
+      options.identifierHashSalt ??
+      process.env.ENGAGEMENT_HASH_SALT ??
+      defaultIdentifierHashSalt;
   }
 
   async getSummary(postSlug: string, actor?: EngagementActor): Promise<EngagementSummary> {
@@ -86,7 +95,7 @@ export class EngagementService {
   }
 
   async submitComment(input: CommentSubmissionInput): Promise<CommentSubmissionResult> {
-    const normalized = normalizeCommentInput(input);
+    const normalized = normalizeCommentInput(input, (value) => this.hashIdentifier(value));
     const fieldErrors = validateComment(normalized);
 
     if (Object.keys(fieldErrors).length > 0) {
@@ -182,7 +191,7 @@ export class EngagementService {
         commenterName: "",
         registeredUserId: registeredUserId(input.actor),
         submittedAt: this.now(),
-        requestContext: input.requestContext,
+        requestContext: sanitizeEngagementRequestContext(input.requestContext),
       },
       this.likeRateLimit,
       (since) => this.repository.countRecentLikes(actorRateLimitKey(input.actor), since),
@@ -214,7 +223,7 @@ export class EngagementService {
   }
 
   async sharePostByEmail(input: SharePostByEmailInput): Promise<SharePostByEmailResult> {
-    const normalized = normalizeShareInput(input);
+    const normalized = normalizeShareInput(input, (value) => this.hashIdentifier(value));
     const fieldErrors = validateShare(normalized);
 
     if (Object.keys(fieldErrors).length > 0) {
@@ -256,7 +265,7 @@ export class EngagementService {
         postSlug: normalized.postSlug,
         channel: "email",
         actor: normalized.actor,
-        requestContext: shareRequestContext(normalized),
+        requestContext: shareRequestContext(normalized, (value) => this.hashIdentifier(value)),
         now: this.now(),
       });
 
@@ -271,7 +280,7 @@ export class EngagementService {
       postSlug: normalized.postSlug,
       channel: "email",
       actor: normalized.actor,
-      requestContext: shareRequestContext(normalized),
+      requestContext: shareRequestContext(normalized, (value) => this.hashIdentifier(value)),
       now: this.now(),
     });
 
@@ -291,7 +300,7 @@ export class EngagementService {
       };
     }
 
-    const recipientEmailHash = hashIdentifier(normalized.recipientEmail);
+    const recipientEmailHash = this.hashIdentifier(normalized.recipientEmail);
     const actorHash = actorRateLimitKey(normalized.actor);
 
     try {
@@ -365,10 +374,20 @@ export class EngagementService {
 
     return { limited: false as const };
   }
+
+  private hashIdentifier(value: string) {
+    return createHmac("sha256", this.identifierHashSalt).update(value).digest("hex");
+  }
 }
 
-function normalizeCommentInput(input: CommentSubmissionInput): CommentSubmissionInput {
+function normalizeCommentInput(
+  input: CommentSubmissionInput,
+  hashIdentifier: HashIdentifier,
+): CommentSubmissionInput {
   const email = input.email.trim().toLowerCase();
+  const baseRequestContext = sanitizeEngagementRequestContext(input.requestContext);
+  const honeypotFilled =
+    Boolean(input.honeypot?.trim()) || Boolean(baseRequestContext?.honeypotFilled);
 
   return {
     ...input,
@@ -378,11 +397,11 @@ function normalizeCommentInput(input: CommentSubmissionInput): CommentSubmission
     email,
     website: input.website?.trim(),
     honeypot: input.honeypot?.trim(),
-    requestContext: {
-      ...input.requestContext,
-      honeypotFilled: Boolean(input.honeypot?.trim()),
-      emailHash: email ? hashIdentifier(email) : input.requestContext?.emailHash,
-    },
+    requestContext: sanitizeEngagementRequestContext({
+      ...baseRequestContext,
+      ...(honeypotFilled ? { honeypotFilled: true } : {}),
+      emailHash: email ? hashIdentifier(email) : baseRequestContext?.emailHash,
+    }),
   };
 }
 
@@ -442,8 +461,14 @@ function commentDecisions(
   return decisions;
 }
 
-function normalizeShareInput(input: SharePostByEmailInput): SharePostByEmailInput {
+function normalizeShareInput(
+  input: SharePostByEmailInput,
+  hashIdentifier: HashIdentifier,
+): SharePostByEmailInput {
   const recipientEmail = input.recipientEmail.trim().toLowerCase();
+  const baseRequestContext = sanitizeEngagementRequestContext(input.requestContext);
+  const honeypotFilled =
+    Boolean(input.honeypot?.trim()) || Boolean(baseRequestContext?.honeypotFilled);
 
   return {
     ...input,
@@ -451,11 +476,11 @@ function normalizeShareInput(input: SharePostByEmailInput): SharePostByEmailInpu
     recipientEmail,
     senderName: input.senderName?.trim(),
     honeypot: input.honeypot?.trim(),
-    requestContext: {
-      ...input.requestContext,
-      honeypotFilled: Boolean(input.honeypot?.trim()),
-      emailHash: recipientEmail ? hashIdentifier(recipientEmail) : input.requestContext?.emailHash,
-    },
+    requestContext: sanitizeEngagementRequestContext({
+      ...baseRequestContext,
+      ...(honeypotFilled ? { honeypotFilled: true } : {}),
+      emailHash: recipientEmail ? hashIdentifier(recipientEmail) : baseRequestContext?.emailHash,
+    }),
   };
 }
 
@@ -477,15 +502,11 @@ function registeredUserId(actor: EngagementActor) {
   return actor.kind === "registered_user" ? actor.userId : undefined;
 }
 
-function hashIdentifier(value: string) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function shareRequestContext(input: SharePostByEmailInput) {
-  return {
+function shareRequestContext(input: SharePostByEmailInput, hashIdentifier: HashIdentifier) {
+  return sanitizeEngagementRequestContext({
     ...input.requestContext,
     recipientEmailHash: hashIdentifier(input.recipientEmail),
-  };
+  });
 }
 
 function commentModerationInput(
@@ -524,4 +545,41 @@ function shareTimingDecision(
   moderationInput: ModerationCheckInput,
 ) {
   return Boolean(input.honeypot || honeypotTimingCheck.decide(moderationInput));
+}
+
+function sanitizeEngagementRequestContext(
+  context: EngagementRequestContext | undefined,
+): EngagementRequestContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+
+  const sanitized: EngagementRequestContext = {};
+
+  if (typeof context.anonymousActorHash === "string" && context.anonymousActorHash) {
+    sanitized.anonymousActorHash = context.anonymousActorHash;
+  }
+  if (typeof context.ipHash === "string" && context.ipHash) {
+    sanitized.ipHash = context.ipHash;
+  }
+  if (typeof context.emailHash === "string" && context.emailHash) {
+    sanitized.emailHash = context.emailHash;
+  }
+  if (typeof context.recipientEmailHash === "string" && context.recipientEmailHash) {
+    sanitized.recipientEmailHash = context.recipientEmailHash;
+  }
+  if (typeof context.userAgentHash === "string" && context.userAgentHash) {
+    sanitized.userAgentHash = context.userAgentHash;
+  }
+  if (typeof context.sessionIdHash === "string" && context.sessionIdHash) {
+    sanitized.sessionIdHash = context.sessionIdHash;
+  }
+  if (typeof context.formAgeMs === "number") {
+    sanitized.formAgeMs = context.formAgeMs;
+  }
+  if (context.honeypotFilled === true) {
+    sanitized.honeypotFilled = true;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
