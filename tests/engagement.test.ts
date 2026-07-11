@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 import { getPostBySlug } from "../src/content/posts";
 import { InMemoryEmailProvider } from "../src/domains/email";
 import {
@@ -6,6 +7,7 @@ import {
   EngagementService,
   InMemoryEngagementRepository,
   type EngagementActor,
+  type EngagementRequestContext,
 } from "../src/domains/engagement";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -62,7 +64,16 @@ describe("engagement service", () => {
 
   it("holds suspicious comments and keeps queue private context for moderators", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
-    const service = new EngagementService(repository, { now: () => now });
+    const service = new EngagementService(repository, {
+      now: () => now,
+      identifierHashSalt: "test-engagement-salt",
+    });
+    const rawContext = {
+      anonymousActorHash: actor.anonymousActorHash,
+      ipHash: "ip_hash",
+      rawIp: "203.0.113.7",
+      rawEmail: "reader@example.com",
+    } as unknown as EngagementRequestContext;
     const result = await service.submitComment({
       postSlug: "welcome",
       body: "Please see my site",
@@ -70,8 +81,9 @@ describe("engagement service", () => {
       email: "reader@example.com",
       website: "https://example.com",
       actor,
-      requestContext: { anonymousActorHash: actor.anonymousActorHash },
+      requestContext: rawContext,
     });
+    const queue = await repository.listModerationQueue();
 
     expect(result).toMatchObject({
       ok: true,
@@ -80,7 +92,7 @@ describe("engagement service", () => {
     expect(await service.getSummary("welcome", actor)).toMatchObject({
       commentCount: 0,
     });
-    expect(await repository.listModerationQueue()).toMatchObject([
+    expect(queue).toMatchObject([
       {
         moderationStatus: "suspicious",
         privateFields: {
@@ -89,6 +101,15 @@ describe("engagement service", () => {
         },
       },
     ]);
+    expect(queue[0]?.requestContext).toEqual({
+      anonymousActorHash: actor.anonymousActorHash,
+      ipHash: "ip_hash",
+      emailHash: createHmac("sha256", "test-engagement-salt")
+        .update("reader@example.com")
+        .digest("hex"),
+    });
+    expect(JSON.stringify(queue[0]?.requestContext)).not.toContain("203.0.113.7");
+    expect(JSON.stringify(queue[0]?.requestContext)).not.toContain("rawEmail");
   });
 
   it("blocks honeypot comments and rate limits repeated comments", async () => {
@@ -96,6 +117,7 @@ describe("engagement service", () => {
     const service = new EngagementService(repository, {
       now: () => now,
       commentRateLimit: { windowSeconds: 600, maxAttempts: 1 },
+      scopedRateLimitStore: null,
     });
 
     expect(
@@ -127,6 +149,43 @@ describe("engagement service", () => {
     });
   });
 
+  it("holds comments submitted faster than the launch timing window", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const service = new EngagementService(repository, { now: () => now });
+    const result = await service.submitComment({
+      postSlug: "welcome",
+      body: "Too quick",
+      name: "Speedy",
+      email: "speedy@example.com",
+      actor,
+      requestContext: {
+        anonymousActorHash: actor.anonymousActorHash,
+        formAgeMs: 250,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "held",
+    });
+    expect(await repository.listModerationQueue()).toMatchObject([
+      {
+        moderationStatus: "suspicious",
+        moderationAudit: [
+          {
+            decision: {
+              source: "system",
+              outcome: "suspicious",
+              metadata: {
+                signal: "fast_submit",
+              },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("returns field errors for invalid comment submissions", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
     const service = new EngagementService(repository, { now: () => now });
@@ -147,6 +206,146 @@ describe("engagement service", () => {
         name: "Name is required.",
         email: "A valid email is required.",
       },
+    });
+  });
+
+  it("rate limits comments by scoped email hash even when the actor cookie changes", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      commentRateLimit: { windowSeconds: 600, maxAttempts: 1 },
+    });
+
+    expect(
+      await service.submitComment({
+        postSlug: "welcome",
+        body: "First",
+        name: "Ada",
+        email: "ada@example.com",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_email_1" },
+        requestContext: { anonymousActorHash: "actor_hash_email_1" },
+      }),
+    ).toMatchObject({
+      ok: true,
+      status: "published",
+    });
+    expect(
+      await service.submitComment({
+        postSlug: "scheduled-briefing",
+        body: "Second",
+        name: "Ada",
+        email: "ada@example.com",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_email_2" },
+        requestContext: { anonymousActorHash: "actor_hash_email_2" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
+  it("rate limits authenticated users by user id when anonymous actor hashes differ", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 1 },
+      scopedRateLimitStore: null,
+    });
+
+    expect(
+      await service.likePost({
+        postSlug: "welcome",
+        actor: {
+          kind: "registered_user",
+          userId: "user_1",
+          anonymousActorHash: "actor_hash_user_1",
+        },
+        requestContext: { anonymousActorHash: "actor_hash_user_1" },
+      }),
+    ).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(
+      await service.likePost({
+        postSlug: "scheduled-briefing",
+        actor: {
+          kind: "registered_user",
+          userId: "user_1",
+          anonymousActorHash: "actor_hash_user_2",
+        },
+        requestContext: { anonymousActorHash: "actor_hash_user_2" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
+  it("rate limits anonymous likes by IP hash when the actor cookie changes", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 1 },
+      scopedRateLimitStore: null,
+    });
+
+    expect(
+      await service.likePost({
+        postSlug: "welcome",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_ip_1" },
+        requestContext: {
+          anonymousActorHash: "actor_hash_ip_1",
+          ipHash: "ip_hash_1",
+        },
+      }),
+    ).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(
+      await service.likePost({
+        postSlug: "scheduled-briefing",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_ip_2" },
+        requestContext: {
+          anonymousActorHash: "actor_hash_ip_2",
+          ipHash: "ip_hash_1",
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
+  it("rate limits repeated duplicate likes as attempts", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 2 },
+      scopedRateLimitStore: null,
+    });
+
+    const input = {
+      postSlug: "welcome",
+      actor,
+      requestContext: {
+        anonymousActorHash: actor.anonymousActorHash,
+        ipHash: "ip_hash_duplicate",
+      },
+    };
+
+    expect(await service.likePost(input)).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(await service.likePost(input)).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(await service.likePost(input)).toMatchObject({
+      ok: false,
+      status: "rate_limited",
     });
   });
 
@@ -187,6 +386,45 @@ describe("engagement service", () => {
     expect(emailProvider.listSentResults()[0].dedupeKey).toMatch(
       /share:welcome:actor_hash_2:[a-f0-9]{64}/,
     );
+  });
+
+  it("records but does not queue email shares submitted too quickly", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const emailProvider = new InMemoryEmailProvider({ now: () => now });
+    const service = new EngagementService(repository, { now: () => now });
+
+    expect(
+      await service.sharePostByEmail({
+        postSlug: "welcome",
+        recipientEmail: "friend@example.com",
+        postTitle: "Welcome",
+        postUrl: "https://example.com/posts/welcome",
+        actor,
+        requestContext: {
+          anonymousActorHash: actor.anonymousActorHash,
+          formAgeMs: 250,
+        },
+        emailProvider,
+        publicationId: "pub_1",
+      }),
+    ).toMatchObject({
+      ok: true,
+      status: "recorded",
+    });
+    expect(emailProvider.listSentResults()).toHaveLength(0);
+  });
+
+  it("requires a private identifier hash salt in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ENGAGEMENT_HASH_SALT", "");
+
+    try {
+      expect(
+        () => new EngagementService(new InMemoryEngagementRepository(["welcome"])),
+      ).toThrow(/ENGAGEMENT_HASH_SALT/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("maps a valid Markdown post into database post metadata for engagement persistence", () => {

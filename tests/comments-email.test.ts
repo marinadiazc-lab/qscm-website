@@ -180,13 +180,13 @@ describe("comments", () => {
     });
   });
 
-  it("rate limits by actor plus post instead of globally throttling the post", () => {
+  it("rate limits by IP hash without applying actor limits to the post-wide scope", () => {
     const store = new InMemoryRateLimitStore();
     const check = createScopedRateLimitCheck({ maxAttempts: 1, store });
-    const makeComment = (id: string, ipHash: string) =>
+    const makeComment = (id: string, postSlug: string, ipHash: string) =>
       buildComment(
         {
-          postSlug: "welcome",
+          postSlug,
           body: "Hello",
           commenter: { kind: "anonymous", name: "Reader", email: `${id}@example.com` },
           requestContext: { ipHash },
@@ -194,13 +194,16 @@ describe("comments", () => {
         { id, now, checks: [check] },
       );
 
-    const first = makeComment("comment_1", "ip_1");
-    const secondDifferentActor = makeComment("comment_2", "ip_2");
-    const secondSameActor = makeComment("comment_3", "ip_1");
+    const first = makeComment("comment_1", "welcome", "ip_1");
+    const samePostDifferentIp = makeComment("comment_2", "welcome", "ip_2");
+    const differentPostSameIp = makeComment("comment_3", "scheduled-briefing", "ip_1");
 
     expect(first).toMatchObject({ ok: true });
-    expect(secondDifferentActor).toMatchObject({ ok: true });
-    expect(secondSameActor).toMatchObject({
+    expect(samePostDifferentIp).toMatchObject({
+      ok: true,
+      comment: { moderationStatus: "approved" },
+    });
+    expect(differentPostSameIp).toMatchObject({
       ok: true,
       comment: { moderationStatus: "blocked" },
     });

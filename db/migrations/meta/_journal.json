@@ -36,6 +36,13 @@
       "when": 1783760000000,
       "tag": "0004_billing_stripe_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783775000000,
+      "tag": "0005_engagement_rate_limit_events",
+      "breakpoints": true
     }
   ]
 }

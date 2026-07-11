@@ -1,20 +1,33 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import {
+  InMemoryRateLimitStore,
+  createHoneypotTimingCheck,
+  createScopedRateLimitCheck,
   moderationStatusForDecisions,
   toModerationAuditEntries,
+  type ModerationCheckInput,
   type ModerationDecision,
+  type RateLimitDecision,
+  type RateLimitStore,
 } from "../moderation";
-import type { EngagementRepository } from "./repository";
+import type { EngagementRateLimitScope, EngagementRepository } from "./repository";
 import type {
   CommentSubmissionInput,
   CommentSubmissionResult,
   EngagementActor,
+  EngagementRequestContext,
   EngagementSummary,
   LikePostInput,
   LikePostResult,
   SharePostByEmailInput,
   SharePostByEmailResult,
 } from "./types";
+
+type EngagementModerationInput = ModerationCheckInput & {
+  requestContext?: EngagementRequestContext;
+};
+
+type HashIdentifier = (value: string) => string;
 
 export type EngagementServiceOptions = {
   now?: () => Date;
@@ -30,12 +43,16 @@ export type EngagementServiceOptions = {
     windowSeconds: number;
     maxAttempts: number;
   };
+  scopedRateLimitStore?: RateLimitStore | null;
+  identifierHashSalt?: string;
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const defaultCommentLimit = { windowSeconds: 10 * 60, maxAttempts: 5 };
 const defaultLikeLimit = { windowSeconds: 60, maxAttempts: 20 };
 const defaultEmailShareLimit = { windowSeconds: 60 * 60, maxAttempts: 3 };
+const defaultIdentifierHashSalt = "qscm-dev-engagement-salt";
+const honeypotTimingCheck = createHoneypotTimingCheck();
 const blockedPhrases = ["buy followers", "crypto giveaway", "free money", "casino bonus"];
 
 export class EngagementService {
@@ -43,6 +60,8 @@ export class EngagementService {
   private readonly commentRateLimit: Required<EngagementServiceOptions>["commentRateLimit"];
   private readonly likeRateLimit: Required<EngagementServiceOptions>["likeRateLimit"];
   private readonly emailShareRateLimit: Required<EngagementServiceOptions>["emailShareRateLimit"];
+  private readonly scopedRateLimitStore?: RateLimitStore;
+  private readonly identifierHashSalt: string;
 
   constructor(
     private readonly repository: EngagementRepository,
@@ -52,6 +71,11 @@ export class EngagementService {
     this.commentRateLimit = options.commentRateLimit ?? defaultCommentLimit;
     this.likeRateLimit = options.likeRateLimit ?? defaultLikeLimit;
     this.emailShareRateLimit = options.emailShareRateLimit ?? defaultEmailShareLimit;
+    this.scopedRateLimitStore =
+      options.scopedRateLimitStore === undefined
+        ? new InMemoryRateLimitStore()
+        : options.scopedRateLimitStore ?? undefined;
+    this.identifierHashSalt = resolveIdentifierHashSalt(options.identifierHashSalt);
   }
 
   async getSummary(postSlug: string, actor?: EngagementActor): Promise<EngagementSummary> {
@@ -71,7 +95,7 @@ export class EngagementService {
   }
 
   async submitComment(input: CommentSubmissionInput): Promise<CommentSubmissionResult> {
-    const normalized = normalizeCommentInput(input);
+    const normalized = normalizeCommentInput(input, (value) => this.hashIdentifier(value));
     const fieldErrors = validateComment(normalized);
 
     if (Object.keys(fieldErrors).length > 0) {
@@ -91,11 +115,11 @@ export class EngagementService {
       };
     }
 
-    const actorHash = actorRateLimitKey(normalized.actor);
+    const moderationInput = commentModerationInput(normalized, this.now());
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "comment",
+      moderationInput,
       this.commentRateLimit,
-      (since) => this.repository.countRecentComments(actorHash, since),
     );
 
     if (rateLimit.limited) {
@@ -107,7 +131,7 @@ export class EngagementService {
       };
     }
 
-    const decisions = commentDecisions(normalized);
+    const decisions = commentDecisions(normalized, moderationInput);
     const moderationStatus = moderationStatusForDecisions(decisions);
     const now = this.now();
     const comment = await this.repository.storeComment({
@@ -158,11 +182,29 @@ export class EngagementService {
   }
 
   async likePost(input: LikePostInput): Promise<LikePostResult> {
-    const actorHash = actorRateLimitKey(input.actor);
+    if (!(await this.repository.postExists(input.postSlug))) {
+      return {
+        ok: false,
+        status: "not_found",
+        message: "That post could not be found.",
+      };
+    }
+
+    const requestContext = sanitizeEngagementRequestContext({
+      ...input.requestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
+    });
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "like",
+      {
+        postSlug: input.postSlug,
+        body: "",
+        commenterName: "",
+        registeredUserId: registeredUserId(input.actor),
+        submittedAt: this.now(),
+        requestContext,
+      },
       this.likeRateLimit,
-      (since) => this.repository.countRecentLikes(actorHash, since),
     );
 
     if (rateLimit.limited) {
@@ -191,7 +233,7 @@ export class EngagementService {
   }
 
   async sharePostByEmail(input: SharePostByEmailInput): Promise<SharePostByEmailResult> {
-    const normalized = normalizeShareInput(input);
+    const normalized = normalizeShareInput(input, (value) => this.hashIdentifier(value));
     const fieldErrors = validateShare(normalized);
 
     if (Object.keys(fieldErrors).length > 0) {
@@ -211,11 +253,11 @@ export class EngagementService {
       };
     }
 
-    const actorHash = actorRateLimitKey(normalized.actor);
+    const moderationInput = shareModerationInput(normalized, this.now());
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "share_email",
+      moderationInput,
       this.emailShareRateLimit,
-      (since) => this.repository.countRecentShares(actorHash, since),
     );
 
     if (rateLimit.limited) {
@@ -227,12 +269,12 @@ export class EngagementService {
       };
     }
 
-    if (normalized.honeypot) {
+    if (shareTimingDecision(normalized, moderationInput)) {
       await this.repository.storeShare({
         postSlug: normalized.postSlug,
         channel: "email",
         actor: normalized.actor,
-        requestContext: shareRequestContext(normalized),
+        requestContext: shareRequestContext(normalized, (value) => this.hashIdentifier(value)),
         now: this.now(),
       });
 
@@ -247,7 +289,7 @@ export class EngagementService {
       postSlug: normalized.postSlug,
       channel: "email",
       actor: normalized.actor,
-      requestContext: shareRequestContext(normalized),
+      requestContext: shareRequestContext(normalized, (value) => this.hashIdentifier(value)),
       now: this.now(),
     });
 
@@ -267,7 +309,8 @@ export class EngagementService {
       };
     }
 
-    const recipientEmailHash = hashIdentifier(normalized.recipientEmail);
+    const recipientEmailHash = this.hashIdentifier(normalized.recipientEmail);
+    const actorHash = actorRateLimitKey(normalized.actor);
 
     try {
       await normalized.emailProvider.sendTransactional({
@@ -303,38 +346,98 @@ export class EngagementService {
   }
 
   private async checkRateLimit(
-    actorHash: string | undefined,
+    action: string,
+    input: EngagementModerationInput,
     limit: { windowSeconds: number; maxAttempts: number },
-    countRecent: (since: Date) => Promise<number>,
   ) {
-    if (!actorHash) {
+    if (this.scopedRateLimitStore) {
+      const scopedDecision = createScopedRateLimitCheck({
+        action,
+        windowMs: limit.windowSeconds * 1000,
+        maxAttempts: limit.maxAttempts,
+        store: this.scopedRateLimitStore,
+      }).decide(input) as RateLimitDecision | undefined;
+
+      if (scopedDecision?.outcome === "block") {
+        return {
+          limited: true as const,
+          retryAfterSeconds: scopedDecision.retryAfterSeconds ?? limit.windowSeconds,
+        };
+      }
+    }
+
+    const actorScope = actorRateLimitScope(input);
+    const postScope = input.postSlug ? { postSlug: input.postSlug } : undefined;
+
+    if (!hasRateLimitScope(actorScope) && !postScope) {
       return { limited: false as const };
     }
 
     const now = this.now();
     const since = new Date(now.getTime() - limit.windowSeconds * 1000);
-    const count = await countRecent(since);
+    const attemptScope: EngagementRateLimitScope = {
+      ...actorScope,
+      ...(input.postSlug ? { postSlug: input.postSlug } : {}),
+    };
 
-    if (count >= limit.maxAttempts) {
+    await this.repository.recordRateLimitAttempt({
+      action,
+      scope: attemptScope,
+      now,
+    });
+
+    const actorCount = hasRateLimitScope(actorScope)
+      ? await this.repository.countRecentRateLimitAttempts(action, actorScope, since)
+      : 0;
+
+    if (actorCount > limit.maxAttempts) {
       return {
         limited: true as const,
         retryAfterSeconds: limit.windowSeconds,
       };
     }
 
+    if (postScope) {
+      const postCount = await this.repository.countRecentRateLimitAttempts(action, postScope, since);
+      if (postCount > postRateLimitMaxAttempts(limit.maxAttempts)) {
+        return {
+          limited: true as const,
+          retryAfterSeconds: limit.windowSeconds,
+        };
+      }
+    }
+
     return { limited: false as const };
+  }
+
+  private hashIdentifier(value: string) {
+    return createHmac("sha256", this.identifierHashSalt).update(value).digest("hex");
   }
 }
 
-function normalizeCommentInput(input: CommentSubmissionInput): CommentSubmissionInput {
+function normalizeCommentInput(
+  input: CommentSubmissionInput,
+  hashIdentifier: HashIdentifier,
+): CommentSubmissionInput {
+  const email = input.email.trim().toLowerCase();
+  const baseRequestContext = sanitizeEngagementRequestContext(input.requestContext);
+  const honeypotFilled =
+    Boolean(input.honeypot?.trim()) || Boolean(baseRequestContext?.honeypotFilled);
+
   return {
     ...input,
     postSlug: input.postSlug.trim(),
     body: input.body.trim(),
     name: input.name.trim(),
-    email: input.email.trim().toLowerCase(),
+    email,
     website: input.website?.trim(),
     honeypot: input.honeypot?.trim(),
+    requestContext: sanitizeEngagementRequestContext({
+      ...baseRequestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
+      ...(honeypotFilled ? { honeypotFilled: true } : {}),
+      emailHash: email ? hashIdentifier(email) : baseRequestContext?.emailHash,
+    }),
   };
 }
 
@@ -349,11 +452,19 @@ function validateComment(input: CommentSubmissionInput) {
   return errors;
 }
 
-function commentDecisions(input: CommentSubmissionInput): ModerationDecision[] {
+function commentDecisions(
+  input: CommentSubmissionInput,
+  moderationInput: ModerationCheckInput,
+): ModerationDecision[] {
   const decisions: ModerationDecision[] = [];
+  const timingDecision = honeypotTimingCheck.decide(moderationInput);
   const lowerBody = input.body.toLowerCase();
   const linkCount = (input.body.match(/https?:\/\//gi) ?? []).length;
   const signals: string[] = [];
+
+  if (timingDecision) {
+    decisions.push(timingDecision);
+  }
 
   if (input.honeypot) {
     signals.push("honeypot");
@@ -386,13 +497,27 @@ function commentDecisions(input: CommentSubmissionInput): ModerationDecision[] {
   return decisions;
 }
 
-function normalizeShareInput(input: SharePostByEmailInput): SharePostByEmailInput {
+function normalizeShareInput(
+  input: SharePostByEmailInput,
+  hashIdentifier: HashIdentifier,
+): SharePostByEmailInput {
+  const recipientEmail = input.recipientEmail.trim().toLowerCase();
+  const baseRequestContext = sanitizeEngagementRequestContext(input.requestContext);
+  const honeypotFilled =
+    Boolean(input.honeypot?.trim()) || Boolean(baseRequestContext?.honeypotFilled);
+
   return {
     ...input,
     postSlug: input.postSlug.trim(),
-    recipientEmail: input.recipientEmail.trim().toLowerCase(),
+    recipientEmail,
     senderName: input.senderName?.trim(),
     honeypot: input.honeypot?.trim(),
+    requestContext: sanitizeEngagementRequestContext({
+      ...baseRequestContext,
+      anonymousActorHash: input.actor.anonymousActorHash,
+      ...(honeypotFilled ? { honeypotFilled: true } : {}),
+      emailHash: recipientEmail ? hashIdentifier(recipientEmail) : baseRequestContext?.emailHash,
+    }),
   };
 }
 
@@ -410,13 +535,124 @@ function actorRateLimitKey(actor: EngagementActor) {
   return actor.kind === "registered_user" ? actor.userId : actor.anonymousActorHash;
 }
 
-function hashIdentifier(value: string) {
-  return createHash("sha256").update(value).digest("hex");
+function registeredUserId(actor: EngagementActor) {
+  return actor.kind === "registered_user" ? actor.userId : undefined;
 }
 
-function shareRequestContext(input: SharePostByEmailInput) {
+function actorRateLimitScope(input: EngagementModerationInput): EngagementRateLimitScope {
   return {
+    anonymousActorHash: input.requestContext?.anonymousActorHash,
+    ipHash: input.requestContext?.ipHash,
+    emailHash: input.requestContext?.emailHash,
+    registeredUserId: input.registeredUserId,
+  };
+}
+
+function hasRateLimitScope(scope: EngagementRateLimitScope) {
+  return Boolean(
+    scope.anonymousActorHash ||
+      scope.ipHash ||
+      scope.emailHash ||
+      scope.registeredUserId,
+  );
+}
+
+function postRateLimitMaxAttempts(maxAttempts: number) {
+  return maxAttempts * 20;
+}
+
+function resolveIdentifierHashSalt(configuredSalt: string | undefined) {
+  const salt = configuredSalt ?? process.env.ENGAGEMENT_HASH_SALT;
+
+  if (salt) {
+    return salt;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("ENGAGEMENT_HASH_SALT is required in production.");
+  }
+
+  return defaultIdentifierHashSalt;
+}
+
+function shareRequestContext(input: SharePostByEmailInput, hashIdentifier: HashIdentifier) {
+  return sanitizeEngagementRequestContext({
     ...input.requestContext,
     recipientEmailHash: hashIdentifier(input.recipientEmail),
+  });
+}
+
+function commentModerationInput(
+  input: CommentSubmissionInput,
+  submittedAt: Date,
+): ModerationCheckInput {
+  return {
+    postSlug: input.postSlug,
+    body: input.body,
+    commenterName: input.name,
+    commenterEmail: input.email,
+    commenterWebsite: input.website,
+    registeredUserId: registeredUserId(input.actor),
+    submittedAt,
+    requestContext: input.requestContext,
   };
+}
+
+function shareModerationInput(
+  input: SharePostByEmailInput,
+  submittedAt: Date,
+): ModerationCheckInput {
+  return {
+    postSlug: input.postSlug,
+    body: "",
+    commenterName: input.senderName ?? "",
+    commenterEmail: input.recipientEmail,
+    registeredUserId: registeredUserId(input.actor),
+    submittedAt,
+    requestContext: input.requestContext,
+  };
+}
+
+function shareTimingDecision(
+  input: SharePostByEmailInput,
+  moderationInput: ModerationCheckInput,
+) {
+  return Boolean(input.honeypot || honeypotTimingCheck.decide(moderationInput));
+}
+
+function sanitizeEngagementRequestContext(
+  context: EngagementRequestContext | undefined,
+): EngagementRequestContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+
+  const sanitized: EngagementRequestContext = {};
+
+  if (typeof context.anonymousActorHash === "string" && context.anonymousActorHash) {
+    sanitized.anonymousActorHash = context.anonymousActorHash;
+  }
+  if (typeof context.ipHash === "string" && context.ipHash) {
+    sanitized.ipHash = context.ipHash;
+  }
+  if (typeof context.emailHash === "string" && context.emailHash) {
+    sanitized.emailHash = context.emailHash;
+  }
+  if (typeof context.recipientEmailHash === "string" && context.recipientEmailHash) {
+    sanitized.recipientEmailHash = context.recipientEmailHash;
+  }
+  if (typeof context.userAgentHash === "string" && context.userAgentHash) {
+    sanitized.userAgentHash = context.userAgentHash;
+  }
+  if (typeof context.sessionIdHash === "string" && context.sessionIdHash) {
+    sanitized.sessionIdHash = context.sessionIdHash;
+  }
+  if (typeof context.formAgeMs === "number") {
+    sanitized.formAgeMs = context.formAgeMs;
+  }
+  if (context.honeypotFilled === true) {
+    sanitized.honeypotFilled = true;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }

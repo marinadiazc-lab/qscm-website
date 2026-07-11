@@ -17,15 +17,15 @@ Commenter email addresses and website URLs are private fields. They can be used 
 
 Launch checks currently include:
 
-- honeypot fields on comment and email-share forms
-- short rolling rate limits for comments, likes, and email shares keyed by a privacy-preserving anonymous actor hash
+- honeypot and form-age timing fields on comment and email-share forms
+- short rolling rate limits for comments, likes, and email shares keyed by privacy-preserving IP hash, email hash, anonymous actor hash, authenticated user scopes, and a higher-ceiling post-wide scope
 - basic spam signals for blocked phrases, high link volume, and optional website URLs
 
 Honeypot inputs are converted to boolean abuse signals before persistence. Raw honeypot payloads, raw IP addresses, and raw email addresses should not be stored in moderation context or audit metadata.
 
 Suspicious comments are persisted with private fields and moderation audit entries so the guarded moderation queue can read them. `/admin/comments` and its moderation action routes require an active user with the `moderator` or `admin` role.
 
-Registered-user and subscriber actors are modeled in the service/repository layer, but the current request runtime only has anonymous cookies available. Do not treat authenticated or subscriber engagement UI states as complete until a current-session/subscriber resolver is wired.
+Registered-user actors are resolved from the current auth session when one is available, while anonymous readers use the privacy-preserving actor cookie. Subscriber-specific engagement UI states remain follow-up work until a subscriber resolver is wired.
 
 AI moderation is still a hook shape only. A later provider can return categories, confidence, model metadata, and an allow/suspicious/block outcome without changing comment creation semantics.
 
@@ -35,9 +35,11 @@ The moderation domain includes reusable checks for launch-time abuse controls:
 
 - `createHoneypotTimingCheck` blocks or holds submissions when a hidden honeypot field is filled, the form is submitted too quickly, the form age is invalid, or the form age is stale.
 - `createKeywordSpamCheck` blocks known spam phrases and can hold suspicious keyword matches for moderator review.
-- `createScopedRateLimitCheck` applies process-local rolling limits by available actor-specific scopes: IP hash plus post, email hash plus post, and registered user id plus post.
+- `createScopedRateLimitCheck` applies process-local rolling limits by available actor-specific scopes: IP hash, email hash, and registered user id, plus a higher-ceiling post-wide scope.
 
-Request context must pass hashed identifiers only. Raw IP addresses and raw email addresses should not be stored in moderation context or audit metadata. The in-memory rate-limit store is suitable for local development and narrow launch protection, but production should attach a durable shared store before relying on limits across server instances.
+Request context must pass hashed identifiers only. Raw IP addresses and raw email addresses should not be stored in moderation context or audit metadata. `ENGAGEMENT_HASH_SALT` is required in production so persisted email, IP, user-agent, session, and anonymous actor hashes are not derived from the public development salt.
+
+For #198, production rate limits record valid comment, share, and like attempts in `engagement_rate_limit_events` before persistence side effects, so IP/email/user/anonymous scopes and duplicate like attempts are counted through the configured database across server processes. Local no-database rendering still uses the in-memory repository and process-local scoped store.
 
 ## Moderator Queue Contract
 
@@ -48,4 +50,4 @@ The admin comment queue exposes approve, reject, and delete actions. Approve set
 ## Follow-ups
 
 - #191: wire the production email provider, durable share intents, dedupe, sender identity, and private recipient storage policy.
-- #198: replace process-local rate limits with durable shared storage if production deployment needs cross-instance enforcement.
+- Rate-limit follow-up: add retention cleanup for old `engagement_rate_limit_events` rows once production traffic patterns are known.
