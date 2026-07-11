@@ -30,6 +30,8 @@ Required production environment:
 - `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`,
   `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`, and
   `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID` for subscriber contact sync
+- Resend broadcast segment ids for each newsletter audience, including a free
+  access segment that contains both free and paid subscribers
 - `RESEND_WEBHOOK_SECRET` for webhook verification at the route layer
 
 `createResendEmailProviderFromEnv` refuses to create a live SDK client when
@@ -91,11 +93,24 @@ changing post visibility behavior.
 `createNewsletterBroadcastFromPost` converts a published post into a
 `CreateEmailBroadcastInput`. Audience targeting starts from post visibility:
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
-posts map tier ids to configured segment ids.
+posts map to one configured segment per exact tier set, falling back to stable
+`tier:<tierId>` or `tiers:<tierId+otherTierId>` segment keys when provider ids are not configured. Free
+subscriber posts target one configured broadcast segment that must include both
+free and paid subscribers, matching the server access rule that paid
+subscribers can read free subscriber content. The Resend adapter rejects
+multi-target draft creation instead of silently sending only the first segment.
 
-The Resend adapter currently creates draft broadcasts only. Scheduled broadcast
-orchestration remains in #50 so the implementation can match the provider
-contract end to end instead of passing incomplete scheduling fields.
+`EmailBroadcastService` owns the app pipeline: it creates or reuses the local
+`email_broadcasts` row, creates the provider draft, stores the provider
+broadcast id on the local row, and sends through `EmailSendService` so a durable
+`email_send_intents` row records the send attempt. Local broadcast ids remain
+the app source of truth; provider ids are stored as external references for
+Resend operations.
+
+The Resend adapter currently creates draft broadcasts and sends existing
+provider drafts immediately. Scheduled broadcast orchestration remains a future
+workflow so the implementation can match the provider contract end to end
+instead of passing incomplete scheduling fields.
 
 ## Provider Events
 

@@ -234,6 +234,7 @@ export class EmailSendService {
     try {
       const result = await this.provider.sendBroadcast({
         ...input,
+        providerBroadcastId: input.providerBroadcastId,
         intent: toIntentReference(intent),
       });
       await this.repository.markResult(intent.id, result);
