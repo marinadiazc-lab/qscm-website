@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "@/src/db";
 import * as schema from "@/src/db/schema";
 import type {
+  AccountLinkingRecord,
   AuthAccount,
   AuthProvider,
   AuthProviderAccountId,
@@ -258,6 +259,39 @@ export class DrizzleAuthRepository implements AuthRepository {
     return row ? magicLinkFromRow(row) : undefined;
   }
 
+  async saveAccountLinkingRecord(
+    record: AccountLinkingRecord,
+  ): Promise<AccountLinkingRecord> {
+    const [row] = await this.db
+      .insert(schema.accountLinkingRecords)
+      .values(toAccountLinkingRecordRow(record))
+      .onConflictDoUpdate({
+        target: schema.accountLinkingRecords.id,
+        set: toAccountLinkingRecordRow(record),
+      })
+      .returning();
+
+    return accountLinkingRecordFromRow(row);
+  }
+
+  async listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): Promise<AccountLinkingRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.accountLinkingRecords)
+      .where(
+        and(
+          eq(schema.accountLinkingRecords.provider, provider),
+          eq(schema.accountLinkingRecords.providerAccountId, providerAccountId),
+        ),
+      )
+      .orderBy(schema.accountLinkingRecords.createdAt);
+
+    return rows.map(accountLinkingRecordFromRow).reverse();
+  }
+
   private async rolesForUser(userId: AuthUserId): Promise<AuthUser["roles"]> {
     const rows = await this.db
       .select({ role: schema.userRoles.role })
@@ -400,6 +434,38 @@ function magicLinkFromRow(row: typeof schema.magicLinkRequests.$inferSelect): Ma
     sessionId: row.sessionId ?? undefined,
     redirectTo: row.redirectTo ?? undefined,
     requestContext: requestContext(row.requestContext),
+  };
+}
+
+function toAccountLinkingRecordRow(
+  record: AccountLinkingRecord,
+): typeof schema.accountLinkingRecords.$inferInsert {
+  return {
+    id: record.id,
+    userId: record.userId,
+    provider: record.provider,
+    providerAccountId: record.providerAccountId,
+    email: record.email ? normalizeAuthEmail(record.email) : undefined,
+    decisionOutcome: record.decisionOutcome,
+    decisionReason: record.decisionReason,
+    metadata: record.metadata ?? {},
+    createdAt: record.createdAt,
+  };
+}
+
+function accountLinkingRecordFromRow(
+  row: typeof schema.accountLinkingRecords.$inferSelect,
+): AccountLinkingRecord {
+  return {
+    id: row.id,
+    userId: row.userId ?? undefined,
+    provider: row.provider,
+    providerAccountId: row.providerAccountId,
+    email: row.email ?? undefined,
+    decisionOutcome: row.decisionOutcome as AccountLinkingRecord["decisionOutcome"],
+    decisionReason: row.decisionReason as AccountLinkingRecord["decisionReason"],
+    metadata: authMetadata(row.metadata),
+    createdAt: row.createdAt,
   };
 }
 

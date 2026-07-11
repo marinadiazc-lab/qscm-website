@@ -8,6 +8,7 @@ export type OAuthProviderConfig = {
   scope: string;
   authUrl: string;
   tokenUrl: string;
+  userInfoUrl?: string;
   callbackPath: string;
   enabled: boolean;
   disabledReason?: string;
@@ -23,6 +24,7 @@ const providerDefinitions: Record<
     scope: "openid email profile",
     authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
+    userInfoUrl: "https://openidconnect.googleapis.com/v1/userinfo",
     callbackPath: "/api/auth/oauth/google/callback",
   },
   facebook: {
@@ -31,6 +33,7 @@ const providerDefinitions: Record<
     scope: "email public_profile",
     authUrl: "https://www.facebook.com/v20.0/dialog/oauth",
     tokenUrl: "https://graph.facebook.com/v20.0/oauth/access_token",
+    userInfoUrl: "https://graph.facebook.com/me?fields=id,name,email,picture",
     callbackPath: "/api/auth/oauth/facebook/callback",
   },
   apple: {

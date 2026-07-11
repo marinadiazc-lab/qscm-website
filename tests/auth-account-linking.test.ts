@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountLinkingRecordFromDecision,
+  authAccountFromOAuthProfile,
   authSessionStatusForTime,
   authorizeAdminSurface,
   buildMagicLinkUrl,
   canConsumeMagicLink,
   consumeMagicLinkRequest,
+  decodeOAuthState,
   decideOAuthAccountLink,
+  encodeOAuthState,
   getAuthBaseUrl,
   getOAuthProviderConfig,
   hasAuthRole,
@@ -19,6 +23,7 @@ import {
   type AuthSession,
   type AuthUser,
   type MagicLinkRequest,
+  type OAuthProviderProfile,
 } from "../src/domains/auth";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -108,6 +113,24 @@ describe("OAuth account linking decisions", () => {
     });
   });
 
+  it("treats an already-linked provider as sign-in when no target user is present", () => {
+    expect(
+      decideOAuthAccountLink({
+        existingAccount: account({ userId: "user_1" }),
+        profile: {
+          provider: "google",
+          providerAccountId: "google_1",
+          email: "reader@example.com",
+          emailVerified: true,
+        },
+      }),
+    ).toMatchObject({
+      outcome: "already_linked",
+      reason: "provider_account_already_linked",
+      targetUserId: "user_1",
+    });
+  });
+
   it("requires confirmation for unverified or mismatched emails", () => {
     expect(
       decideOAuthAccountLink({
@@ -137,6 +160,87 @@ describe("OAuth account linking decisions", () => {
     ).toMatchObject({
       outcome: "requires_confirmation",
       reason: "email_mismatch_requires_confirmation",
+    });
+  });
+});
+
+describe("OAuth account linking persistence helpers", () => {
+  const profile: OAuthProviderProfile = {
+    provider: "google",
+    providerAccountId: "google_1",
+    email: "Reader@Example.com",
+    emailVerified: true,
+    displayName: "Reader",
+    avatarUrl: "https://example.com/avatar.png",
+  };
+
+  it("builds audit records from linking decisions without raw tokens", () => {
+    const decision = decideOAuthAccountLink({
+      targetUser: user(),
+      profile,
+    });
+    const record = accountLinkingRecordFromDecision({
+      id: "link_1",
+      decision,
+      profile,
+      createdAt: now,
+      metadata: { intent: "link" },
+    });
+
+    expect(record).toMatchObject({
+      id: "link_1",
+      userId: "user_1",
+      provider: "google",
+      providerAccountId: "google_1",
+      email: "reader@example.com",
+      decisionOutcome: "link",
+      decisionReason: "explicit_verified_email_match",
+      metadata: {
+        intent: "link",
+        targetUserId: "user_1",
+      },
+    });
+  });
+
+  it("persists account-linking records defensively in memory", () => {
+    const repository = new InMemoryAuthRepository();
+    const record = accountLinkingRecordFromDecision({
+      id: "link_1",
+      decision: decideOAuthAccountLink({ targetUser: user(), profile }),
+      profile,
+      createdAt: now,
+    });
+
+    const saved = repository.saveAccountLinkingRecord(record);
+    saved.metadata!.message = "changed";
+
+    expect(repository.listAccountLinkingRecordsForProvider("google", "google_1")).toMatchObject([
+      {
+        id: "link_1",
+        metadata: {
+          message: "The verified provider email matches the signed-in user.",
+        },
+      },
+    ]);
+  });
+
+  it("builds active auth accounts from provider profiles", () => {
+    expect(
+      authAccountFromOAuthProfile({
+        id: "acct_1",
+        userId: "user_1",
+        profile,
+        now,
+      }),
+    ).toMatchObject({
+      id: "acct_1",
+      userId: "user_1",
+      provider: "google",
+      providerAccountId: "google_1",
+      email: "reader@example.com",
+      emailVerifiedAt: now,
+      status: "active",
+      lastAuthenticatedAt: now,
     });
   });
 });
@@ -291,6 +395,32 @@ describe("auth URLs", () => {
         redirectTo: "/account",
       }),
     ).toBe("https://qscm.example/api/auth/magic-link/consume?token=token_1&redirectTo=%2Faccount");
+  });
+
+  it("round-trips OAuth state and rejects unsafe redirects", () => {
+    const encoded = encodeOAuthState({
+      state: "state_1",
+      provider: "google",
+      intent: "link",
+      redirectTo: "/account",
+    });
+
+    expect(decodeOAuthState(encoded)).toEqual({
+      state: "state_1",
+      provider: "google",
+      intent: "link",
+      redirectTo: "/account",
+    });
+    expect(
+      decodeOAuthState(
+        encodeOAuthState({
+          state: "state_1",
+          provider: "google",
+          intent: "sign_in",
+          redirectTo: "//evil.example",
+        }),
+      ),
+    ).toBeUndefined();
   });
 });
 

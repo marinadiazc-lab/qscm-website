@@ -1,4 +1,5 @@
 import type {
+  AccountLinkingRecord,
   AuthAccount,
   AuthAccountId,
   AuthProvider,
@@ -50,6 +51,13 @@ export interface AuthRepository {
     status: MagicLinkRequestStatus,
     changedAt: Date,
   ): MagicLinkRequest | undefined | Promise<MagicLinkRequest | undefined>;
+  saveAccountLinkingRecord(
+    record: AccountLinkingRecord,
+  ): AccountLinkingRecord | Promise<AccountLinkingRecord>;
+  listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): AccountLinkingRecord[] | Promise<AccountLinkingRecord[]>;
 }
 
 export class InMemoryAuthRepository implements AuthRepository {
@@ -60,6 +68,7 @@ export class InMemoryAuthRepository implements AuthRepository {
     MagicLinkRequestId,
     MagicLinkRequest
   >();
+  private readonly accountLinkingRecords = new Map<string, AccountLinkingRecord>();
 
   constructor(seed: InMemoryAuthRepositorySeed = {}) {
     seed.users?.forEach((user) => {
@@ -73,6 +82,9 @@ export class InMemoryAuthRepository implements AuthRepository {
     });
     seed.magicLinkRequests?.forEach((request) => {
       this.magicLinkRequests.set(request.id, cloneMagicLinkRequest(request));
+    });
+    seed.accountLinkingRecords?.forEach((record) => {
+      this.accountLinkingRecords.set(record.id, cloneAccountLinkingRecord(record));
     });
   }
 
@@ -255,11 +267,32 @@ export class InMemoryAuthRepository implements AuthRepository {
     return cloneMagicLinkRequest(updated);
   }
 
+  saveAccountLinkingRecord(record: AccountLinkingRecord): AccountLinkingRecord {
+    const stored = cloneAccountLinkingRecord(record);
+    this.accountLinkingRecords.set(stored.id, stored);
+    return cloneAccountLinkingRecord(stored);
+  }
+
+  listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): AccountLinkingRecord[] {
+    return Array.from(this.accountLinkingRecords.values())
+      .filter(
+        (record) =>
+          record.provider === provider &&
+          record.providerAccountId === providerAccountId,
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map(cloneAccountLinkingRecord);
+  }
+
   clear() {
     this.users.clear();
     this.accounts.clear();
     this.sessions.clear();
     this.magicLinkRequests.clear();
+    this.accountLinkingRecords.clear();
   }
 }
 
@@ -268,6 +301,7 @@ export interface InMemoryAuthRepositorySeed {
   accounts?: readonly AuthAccount[];
   sessions?: readonly AuthSession[];
   magicLinkRequests?: readonly MagicLinkRequest[];
+  accountLinkingRecords?: readonly AccountLinkingRecord[];
 }
 
 function cloneUser(user: AuthUser): AuthUser {
@@ -324,6 +358,14 @@ function cloneMagicLinkRequest(request: MagicLinkRequest): MagicLinkRequest {
     requestContext: request.requestContext
       ? { ...request.requestContext }
       : undefined,
+  };
+}
+
+function cloneAccountLinkingRecord(record: AccountLinkingRecord): AccountLinkingRecord {
+  return {
+    ...record,
+    createdAt: new Date(record.createdAt),
+    metadata: record.metadata ? { ...record.metadata } : undefined,
   };
 }
 

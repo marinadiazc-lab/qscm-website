@@ -11,15 +11,23 @@ import { DrizzleAuthRepository } from "../drizzle-repository";
 import type { AuthAccount, AuthRepository, AuthSession, AuthUser } from "../index";
 import {
   AUTH_SESSION_COOKIE,
+  FetchOAuthProviderClient,
+  OAuthProviderError,
+  type OAuthProviderClient,
+  accountLinkingRecordFromDecision,
+  authAccountFromOAuthProfile,
   authSessionStatusForTime,
   buildMagicLinkUrl,
   createAuthId,
   createOpaqueToken,
   getAuthBaseUrl,
+  getOAuthProviderConfig,
   hashAuthToken,
   magicLinkExpiresAt,
   normalizeAuthEmail,
+  decideOAuthAccountLink,
   sessionExpiresAt,
+  type OAuthProvider,
 } from "../index";
 import { deliverMagicLinkEmail, type MagicLinkDeliveryResult } from "../magic-link-email";
 
@@ -34,6 +42,20 @@ export type RequestMagicLinkResult = {
 export type ConsumeMagicLinkResult =
   | { status: "authenticated"; user: AuthUser; session: AuthSession }
   | { status: "invalid" | "expired" | "already_used"; message: string };
+
+export type CompleteOAuthCallbackResult =
+  | {
+      status: "authenticated";
+      user: AuthUser;
+      session: AuthSession;
+      account: AuthAccount;
+    }
+  | { status: "linked" | "already_linked"; user: AuthUser; account: AuthAccount }
+  | {
+      status: "requires_confirmation" | "rejected" | "provider_error";
+      reason: string;
+      message: string;
+    };
 
 let repositoryPromise: Promise<AuthRepository> | undefined;
 
@@ -171,6 +193,174 @@ export async function consumeMagicLinkToken(input: {
   return { status: "authenticated", user, session };
 }
 
+export async function completeOAuthCallback(input: {
+  provider: OAuthProvider;
+  code: string;
+  redirectUri: string;
+  targetUser?: AuthUser;
+  intent: "sign_in" | "link";
+  now?: Date;
+  client?: OAuthProviderClient;
+}): Promise<CompleteOAuthCallbackResult> {
+  const config = getOAuthProviderConfig(input.provider);
+
+  if (!config.enabled) {
+    return {
+      status: "provider_error",
+      reason: "provider_disabled",
+      message: config.disabledReason ?? "That provider is not configured.",
+    };
+  }
+
+  const repository = await getAuthRepository();
+  const now = input.now ?? new Date();
+  const client = input.client ?? new FetchOAuthProviderClient();
+
+  try {
+    const token = await client.exchangeCode({
+      config,
+      code: input.code,
+      redirectUri: input.redirectUri,
+    });
+    const profile = await client.fetchProfile({ config, token });
+
+    if (profile.provider !== input.provider) {
+      return {
+        status: "provider_error",
+        reason: "provider_mismatch",
+        message: "The OAuth provider returned an unexpected profile.",
+      };
+    }
+
+    const existingAccount = await repository.findAccountByProvider(
+      profile.provider,
+      profile.providerAccountId,
+    );
+    const existingUserWithEmail = profile.email
+      ? await repository.findUserByEmail(profile.email)
+      : undefined;
+    const decision = decideOAuthAccountLink({
+      profile,
+      targetUser: input.targetUser,
+      existingAccount,
+      existingUserWithEmail,
+    });
+
+    await repository.saveAccountLinkingRecord(
+      accountLinkingRecordFromDecision({
+        id: createAuthId("link"),
+        decision,
+        profile,
+        createdAt: now,
+        metadata: {
+          intent: input.intent,
+        },
+      }),
+    );
+
+    if (decision.outcome === "reject") {
+      return {
+        status: "rejected",
+        reason: decision.reason,
+        message: decision.message,
+      };
+    }
+
+    if (decision.outcome === "requires_confirmation") {
+      return {
+        status: "requires_confirmation",
+        reason: decision.reason,
+        message: decision.message,
+      };
+    }
+
+    if (decision.outcome === "link") {
+      const account = await repository.saveAccount(
+        authAccountFromOAuthProfile({
+          id: createAuthId("account"),
+          userId: decision.targetUserId,
+          profile,
+          now,
+        }),
+      );
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
+
+      return { status: "linked", user, account };
+    }
+
+    if (decision.outcome === "already_linked") {
+      if (!existingAccount || existingAccount.status !== "active") {
+        return {
+          status: "rejected",
+          reason: "provider_account_inactive",
+          message: "This provider account cannot be used for sign-in.",
+        };
+      }
+
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
+
+      const account = await repository.saveAccount({
+        ...existingAccount,
+        email: profile.email ? normalizeAuthEmail(profile.email) : existingAccount.email,
+        emailVerifiedAt: profile.emailVerified ? now : existingAccount.emailVerifiedAt,
+        displayName: profile.displayName ?? existingAccount.displayName,
+        avatarUrl: profile.avatarUrl ?? existingAccount.avatarUrl,
+        lastAuthenticatedAt: now,
+        updatedAt: now,
+      });
+
+      if (input.targetUser) {
+        return { status: "already_linked", user, account };
+      }
+
+      const session = await createAndSetSession(repository, user.id, now);
+
+      return { status: "authenticated", user, session, account };
+    }
+
+    const user = await repository.saveUser({
+      id: createAuthId("user"),
+      email: decision.email,
+      emailVerifiedAt: now,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      roles: ["reader"],
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const account = await repository.saveAccount(
+      authAccountFromOAuthProfile({
+        id: createAuthId("account"),
+        userId: user.id,
+        profile,
+        now,
+      }),
+    );
+    const session = await createAndSetSession(repository, user.id, now);
+
+    return { status: "authenticated", user, session, account };
+  } catch (error) {
+    if (error instanceof OAuthProviderError) {
+      return {
+        status: "provider_error",
+        reason: error.code,
+        message: error.message,
+      };
+    }
+
+    throw error;
+  }
+}
+
 export async function revokeCurrentSession(): Promise<void> {
   const cookieStore = await cookies();
   const token = cookieStore.get(AUTH_SESSION_COOKIE)?.value;
@@ -242,6 +432,34 @@ async function ensureEmailMagicLinkAccount(
     createdAt: now,
     updatedAt: now,
   });
+}
+
+async function createAndSetSession(
+  repository: AuthRepository,
+  userId: string,
+  now: Date,
+): Promise<AuthSession> {
+  const sessionToken = createOpaqueToken();
+  const session = await repository.saveSession({
+    id: createAuthId("session"),
+    userId,
+    tokenHash: hashAuthToken(sessionToken),
+    status: "active",
+    createdAt: now,
+    expiresAt: sessionExpiresAt(now),
+  });
+
+  await setSessionCookie(sessionToken, session.expiresAt);
+
+  return session;
+}
+
+function disabledUserResult(): CompleteOAuthCallbackResult {
+  return {
+    status: "rejected",
+    reason: "disabled_user",
+    message: "This account is disabled.",
+  };
 }
 
 async function setSessionCookie(token: string, expiresAt: Date): Promise<void> {
