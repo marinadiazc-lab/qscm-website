@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { requireAdminPageAccess } from "../_access";
 import {
   AdminPageHeader,
   CommentTable,
@@ -21,6 +22,8 @@ type CommentPageProps = {
 };
 
 export default async function AdminCommentsPage({ searchParams }: CommentPageProps) {
+  await requireAdminPageAccess();
+
   const params = (await searchParams) ?? {};
   const publication = await getAdminPublication();
   const comments = publication

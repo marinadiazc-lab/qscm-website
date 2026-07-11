@@ -4,6 +4,7 @@ export type PodcastShowId = string;
 export type PodcastEpisodeId = string;
 export type PrivateFeedTokenId = string;
 export type PrivateFeedTokenHash = string;
+export type PrivateFeedRawToken = string;
 
 export type PodcastShowStatus = "draft" | "active" | "archived";
 
@@ -104,7 +105,8 @@ export type PrivateFeedTokenAuditEventKind =
   | "rotated"
   | "expired"
   | "access_granted"
-  | "access_denied";
+  | "access_denied"
+  | "sharing_signal";
 
 export interface PrivateFeedRequestContext {
   ipAddress?: string;
@@ -120,6 +122,17 @@ export interface PrivateFeedTokenAuditEvent {
   showId?: PodcastShowId;
   episodeId?: PodcastEpisodeId;
   reason?: string;
+  requestContext?: PrivateFeedRequestContext;
+}
+
+export interface PrivateFeedDeniedProbe {
+  publicationId?: string;
+  tokenHash: PrivateFeedTokenHash;
+  showSlug: string;
+  tokenId?: PrivateFeedTokenId;
+  showId?: PodcastShowId;
+  reason: string;
+  occurredAt: Date;
   requestContext?: PrivateFeedRequestContext;
 }
 
@@ -186,6 +199,22 @@ export interface PodcastAccessDecision {
     status: PrivateFeedTokenStatus;
   };
   entitlement?: PodcastEntitlementResult;
+}
+
+export interface PrivateFeedTokenIssueResult {
+  token: PrivateFeedToken;
+  rawToken: PrivateFeedRawToken;
+  feedUrl?: string;
+}
+
+export interface PrivateFeedSharingSignal {
+  tokenId: PrivateFeedTokenId;
+  suspicious: boolean;
+  reason: "ip_address_spread" | "user_agent_spread" | "within_expected_use";
+  distinctIpAddresses: number;
+  distinctUserAgents: number;
+  observedAccesses: number;
+  checkedAt: Date;
 }
 
 export interface PodcastRssEnclosure {
