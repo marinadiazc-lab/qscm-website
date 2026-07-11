@@ -1,6 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 
-import { authorizeAdminSurface, authorizeModerationSurface } from "@/src/domains/auth";
+import {
+  authorizeAdminSurface,
+  authorizeModerationSurface,
+  authorizeSubscriberAdminSurface,
+} from "@/src/domains/auth";
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
 
 export async function requireAdminPageAccess() {
@@ -25,6 +29,21 @@ export async function requireModerationPageAccess() {
   if (!decision.allowed) {
     if (decision.status === 401) {
       redirect("/login?redirectTo=/admin/comments");
+    }
+
+    notFound();
+  }
+
+  return decision.user;
+}
+
+export async function requireSubscriberAdminPageAccess() {
+  const auth = await getCurrentAuthSession();
+  const decision = authorizeSubscriberAdminSurface(auth?.user);
+
+  if (!decision.allowed) {
+    if (decision.status === 401) {
+      redirect("/login?redirectTo=/admin/subscribers");
     }
 
     notFound();

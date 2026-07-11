@@ -629,6 +629,10 @@ describe("RBAC guards", () => {
       allowed: false,
       status: 403,
     });
+    expect(authorizeSubscriberAdminSurface(user({ roles: ["moderator"] }))).toMatchObject({
+      allowed: false,
+      status: 403,
+    });
     expect(authorizeSubscriberAdminSurface(user({ roles: ["support"] }))).toMatchObject({
       allowed: true,
       status: 200,
