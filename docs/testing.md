@@ -30,8 +30,9 @@ This project uses Vitest for fast TypeScript tests around the domain modules and
 
 - Protected admin dashboard foundation with dynamic admin pages for subscribers,
   tiers, access grants, comments, media, podcast state, and operational logs.
-- Production build verifies the admin pages stay server-rendered and the
-  subscriber export route remains behind its own admin guard.
+- Focused admin safety tests cover CSV formula neutralization and operational
+  log redaction helpers. Production build keeps the admin pages server-rendered
+  and the subscriber export route behind its own admin guard.
 
 ## CI Gate
 

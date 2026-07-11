@@ -4,6 +4,7 @@ import {
   getAdminPublication,
   listAdminSubscribers,
 } from "@/src/domains/admin/dashboard";
+import { escapeCsvCell } from "@/src/domains/admin/safety";
 import { authorizeAdminSurface } from "@/src/domains/auth";
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
 
@@ -64,10 +65,4 @@ export async function GET() {
 
 function toCsv(rows: string[][]) {
   return rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
-}
-
-function escapeCsvCell(value: string) {
-  const escaped = value.replaceAll('"', '""');
-
-  return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 }

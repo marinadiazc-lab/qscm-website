@@ -5,7 +5,7 @@ import {
   CommentTable,
   DisabledAdminButton,
 } from "../_components";
-import { listAdminComments } from "@/src/domains/admin/dashboard";
+import { getAdminPublication, listAdminComments } from "@/src/domains/admin/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,13 @@ type CommentPageProps = {
 
 export default async function AdminCommentsPage({ searchParams }: CommentPageProps) {
   const params = (await searchParams) ?? {};
-  const comments = await listAdminComments(params.status || "suspicious");
+  const publication = await getAdminPublication();
+  const comments = publication
+    ? await listAdminComments({
+        publicationId: publication.id,
+        status: params.status || "suspicious",
+      })
+    : [];
 
   return (
     <div className="stack">

@@ -4,6 +4,7 @@ import { and, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgTable } from "drizzle-orm/pg-core";
 
 import { db, schema } from "@/src/db";
+import { redactSensitiveText, redactSensitiveValue } from "./safety";
 
 const subscriberStatuses = [
   "active",
@@ -159,11 +160,8 @@ export async function getDashboardMetrics(
         sql`${schema.subscriptions.status} in ('trialing', 'active', 'grace_period', 'comped')`,
       ),
     ),
-    countRows(schema.comments, eq(schema.comments.moderationStatus, "suspicious")),
-    countRows(
-      schema.subscriberProviderSyncs,
-      eq(schema.subscriberProviderSyncs.syncStatus, "failed"),
-    ),
+    countPendingComments(publicationId),
+    countFailedEmailSyncs(publicationId),
     countRows(schema.webhookEventLogs, eq(schema.webhookEventLogs.state, "failed")),
   ]);
 
@@ -353,8 +351,11 @@ export async function listAccessGrants(
   }));
 }
 
-export async function listAdminComments(status = "suspicious"): Promise<AdminCommentRow[]> {
-  const moderationStatus = parseModerationStatus(status) ?? "suspicious";
+export async function listAdminComments(input: {
+  publicationId: string;
+  status?: string;
+}): Promise<AdminCommentRow[]> {
+  const moderationStatus = parseModerationStatus(input.status) ?? "suspicious";
   const rows = await db
     .select({
       id: schema.comments.id,
@@ -368,7 +369,12 @@ export async function listAdminComments(status = "suspicious"): Promise<AdminCom
     })
     .from(schema.comments)
     .innerJoin(schema.postMetadata, eq(schema.comments.postId, schema.postMetadata.id))
-    .where(eq(schema.comments.moderationStatus, moderationStatus))
+    .where(
+      and(
+        eq(schema.postMetadata.publicationId, input.publicationId),
+        eq(schema.comments.moderationStatus, moderationStatus),
+      ),
+    )
     .orderBy(desc(schema.comments.createdAt))
     .limit(50);
 
@@ -478,7 +484,7 @@ export async function listOperationalLogs(): Promise<AdminOperationalLogRow[]> {
       action: row.action,
       subject: [row.subjectType, row.subjectId].filter(Boolean).join(":"),
       status: row.sensitivity,
-      detail: redactSensitiveText(JSON.stringify(row.metadata)),
+      detail: JSON.stringify(redactSensitiveValue(row.metadata)) ?? "",
       occurredAt: row.createdAt,
     })),
   ]
@@ -517,6 +523,39 @@ async function countRows(
   return row?.value ?? 0;
 }
 
+async function countPendingComments(publicationId: string): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(schema.comments)
+    .innerJoin(schema.postMetadata, eq(schema.comments.postId, schema.postMetadata.id))
+    .where(
+      and(
+        eq(schema.postMetadata.publicationId, publicationId),
+        eq(schema.comments.moderationStatus, "suspicious"),
+      ),
+    );
+
+  return row?.value ?? 0;
+}
+
+async function countFailedEmailSyncs(publicationId: string): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(schema.subscriberProviderSyncs)
+    .innerJoin(
+      schema.subscribers,
+      eq(schema.subscriberProviderSyncs.subscriberId, schema.subscribers.id),
+    )
+    .where(
+      and(
+        eq(schema.subscribers.publicationId, publicationId),
+        eq(schema.subscriberProviderSyncs.syncStatus, "failed"),
+      ),
+    );
+
+  return row?.value ?? 0;
+}
+
 function parseSubscriberStatus(value: string | undefined) {
   const normalized = value?.trim();
 
@@ -537,10 +576,4 @@ function stringFromMetadata(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
 
   return typeof value === "string" ? value : "";
-}
-
-function redactSensitiveText(value: string) {
-  return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
-    .replace(/(token|secret|password|authorization)["':=\s]+[^"',\s}]+/gi, "$1: [redacted]");
 }
