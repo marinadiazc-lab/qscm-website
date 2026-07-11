@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { db, schema, type DbClient } from "@/src/db";
@@ -7,6 +9,7 @@ import type { BillingInterval, SubscriptionStatus } from "../subscriptions";
 import type {
   CheckoutSessionCreateResult,
   CustomerPortalCreateResult,
+  StripeSubscriptionPersistenceOptions,
   StripeSubscriptionRecord,
   WebhookProcessInput,
   WebhookProcessResult,
@@ -22,6 +25,14 @@ const STRIPE_SUBSCRIPTION_EVENTS = new Set([
   "customer.subscription.deleted",
   "invoice.payment_failed",
   "invoice.payment_succeeded",
+]);
+
+const ENTITLED_STATUSES = new Set<SubscriptionStatus>([
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "unpaid",
 ]);
 
 export class BillingService {
@@ -103,7 +114,7 @@ export class BillingService {
       stripePriceId: price.providerPriceId,
       successUrl: `${input.baseUrl}/account?billing=checkout_success`,
       cancelUrl: `${input.baseUrl}/subscribe?billing=checkout_canceled`,
-      idempotencyKey: `checkout:${input.userId}:${price.id}`,
+      idempotencyKey: `checkout:${input.userId}:${price.id}:${randomUUID()}`,
       userId: input.userId,
       subscriberId: subscriber.id,
       customerEmail: input.email,
@@ -190,7 +201,8 @@ export class BillingService {
       label: statusLabel(row.subscription.status),
       tierName: row.tier?.name,
       interval: row.price?.interval,
-      currentPeriodEnd: row.subscription.currentPeriodEndsAt ?? row.subscription.accessEndsAt,
+      currentPeriodEnd:
+        row.subscription.currentPeriodEndsAt ?? row.subscription.accessEndsAt ?? undefined,
       cancelAtPeriodEnd: row.subscription.cancelAtPeriodEnd,
       providerCustomerId: row.subscription.providerCustomerId ?? row.customer?.providerCustomerId,
       providerSubscriptionId: row.subscription.providerSubscriptionId ?? undefined,
@@ -239,7 +251,9 @@ export class BillingService {
         };
       }
 
-      const status = await this.persistStripeSubscription(subscription);
+      const status = await this.persistStripeSubscription(subscription, {
+        eventCreatedAt: fromUnixNumber(event.created),
+      });
 
       await this.markWebhookLog(event.id, "processed");
       return {
@@ -445,6 +459,7 @@ export class BillingService {
 
   private async persistStripeSubscription(
     subscription: StripeSubscriptionRecord,
+    options: StripeSubscriptionPersistenceOptions = {},
   ): Promise<SubscriptionStatus> {
     const status = mapStripeStatus(subscription.status);
     const [price] = subscription.priceId
@@ -479,7 +494,13 @@ export class BillingService {
     const tierPriceId = price?.id ?? stringValue(subscription.metadata.tierPriceId);
     const accessEndsAt = getAccessEndsAt(status, subscription);
 
-    await this.database.transaction(async (tx) => {
+    const savedStatus = await this.database.transaction(async (tx) => {
+      const existing = await this.findLocalSubscription(subscription.subscriptionId, tx);
+
+      if (existing && isOutOfOrderStripeEvent(existing.metadata, options.eventCreatedAt)) {
+        return existing.status;
+      }
+
       const values = {
         publicationId: customer.publicationId,
         subscriberId: customer.subscriberId,
@@ -500,14 +521,17 @@ export class BillingService {
         canceledAt: subscription.canceledAt,
         accessEndsAt,
         metadata: {
+          ...(existing?.metadata ?? {}),
           stripeStatus: subscription.status,
           productId: subscription.productId ?? "",
           priceId: subscription.priceId ?? "",
+          ...(options.eventCreatedAt
+            ? { stripeEventCreatedAt: options.eventCreatedAt.toISOString() }
+            : {}),
           reconciledAt: new Date().toISOString(),
         },
         updatedAt: new Date(),
       };
-      const existing = await this.findLocalSubscription(subscription.subscriptionId, tx);
       const [saved] = existing
         ? await tx
             .update(schema.subscriptions)
@@ -522,11 +546,11 @@ export class BillingService {
             })
             .returning();
 
-      await this.refreshEntitlements(tx, saved.id, customer, tierId, accessEndsAt);
-      return saved;
+      await this.refreshEntitlements(tx, saved.id, customer, tierId, status, accessEndsAt);
+      return status;
     });
 
-    return status;
+    return savedStatus;
   }
 
   private async refreshEntitlements(
@@ -534,9 +558,14 @@ export class BillingService {
     subscriptionId: string,
     customer: typeof schema.billingCustomers.$inferSelect,
     tierId: string | undefined,
+    status: SubscriptionStatus,
     accessEndsAt: Date | undefined,
   ) {
-    if (!tierId) {
+    await database
+      .delete(schema.entitlementGrants)
+      .where(eq(schema.entitlementGrants.subscriptionId, subscriptionId));
+
+    if (!tierId || !shouldGrantEntitlements(status, accessEndsAt)) {
       return;
     }
 
@@ -549,10 +578,6 @@ export class BillingService {
     if (!tier) {
       return;
     }
-
-    await database
-      .delete(schema.entitlementGrants)
-      .where(eq(schema.entitlementGrants.subscriptionId, subscriptionId));
 
     for (const entitlementKey of tier.entitlementKeys) {
       await database.insert(schema.entitlementGrants).values({
@@ -751,4 +776,35 @@ function stringValue(value: unknown) {
 
 function fromUnixNumber(value: unknown) {
   return typeof value === "number" && value > 0 ? new Date(value * 1000) : undefined;
+}
+
+function shouldGrantEntitlements(status: SubscriptionStatus, accessEndsAt: Date | undefined) {
+  if (!ENTITLED_STATUSES.has(status)) {
+    return false;
+  }
+
+  if (status === "past_due" || status === "canceled" || status === "unpaid") {
+    return Boolean(accessEndsAt && accessEndsAt.getTime() > Date.now());
+  }
+
+  return !accessEndsAt || accessEndsAt.getTime() > Date.now();
+}
+
+function isOutOfOrderStripeEvent(
+  metadata: Record<string, unknown> | undefined,
+  eventCreatedAt: Date | undefined,
+) {
+  if (!eventCreatedAt) {
+    return false;
+  }
+
+  const previousEventCreatedAt = stringValue(metadata?.stripeEventCreatedAt);
+
+  if (!previousEventCreatedAt) {
+    return false;
+  }
+
+  const previous = new Date(previousEventCreatedAt);
+
+  return !Number.isNaN(previous.getTime()) && previous.getTime() > eventCreatedAt.getTime();
 }

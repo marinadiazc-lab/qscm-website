@@ -93,6 +93,10 @@ export interface StripeSubscriptionRecord {
   metadata: Record<string, string>;
 }
 
+export interface StripeSubscriptionPersistenceOptions {
+  eventCreatedAt?: Date;
+}
+
 export type WebhookEventLogState =
   | "received"
   | "processing"

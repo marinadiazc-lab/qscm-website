@@ -165,7 +165,7 @@ export class StripeRestClient {
     throw new Error("Use BillingService.processWebhookEvent so local state is updated transactionally.");
   }
 
-  private async request<T>(
+  private async request<T extends object>(
     path: string,
     body: StripeParams,
     idempotencyKey?: string,
@@ -205,9 +205,16 @@ export class StripeRestClient {
   }
 }
 
-type StripeParams =
-  | Record<string, StripeParamValue | StripeParams | StripeParamValue[] | StripeParams[] | undefined>
-  | undefined;
+type StripeParams = StripeParamObject | undefined;
+
+interface StripeParamObject {
+  [key: string]:
+    | StripeParamValue
+    | StripeParamObject
+    | StripeParamValue[]
+    | StripeParamObject[]
+    | undefined;
+}
 
 type StripeParamValue = string | number | boolean | null;
 
@@ -234,6 +241,7 @@ type StripePortalSessionResponse = {
 export type StripeWebhookEvent = {
   id: string;
   type: string;
+  created?: number;
   data: {
     object: Record<string, unknown>;
   };
