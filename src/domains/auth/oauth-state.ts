@@ -47,5 +47,12 @@ export function isSafeInternalRedirect(value: unknown): value is string {
     return false;
   }
 
-  return !/[\\\u0000-\u001f\u007f]/.test(value) && !/%5c/i.test(value);
+  if (value.includes("\\") || value.toLowerCase().includes("%5c")) {
+    return false;
+  }
+
+  return Array.from(value).every((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint > 31 && codePoint !== 127;
+  });
 }
