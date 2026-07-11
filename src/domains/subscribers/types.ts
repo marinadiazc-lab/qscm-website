@@ -130,6 +130,7 @@ export interface SubscriberImportRow {
   marketingEmailOptIn?: boolean;
   productEmailOptIn?: boolean;
   commentNotificationOptIn?: boolean;
+  validationErrors?: string[];
 }
 
 export interface SubscriberImportResult {

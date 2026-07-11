@@ -1,9 +1,12 @@
 # Admin Dashboard
 
-The M12 admin foundation lives under `/admin` and is protected server-side with
-the existing `authorizeAdminSurface` admin role guard. Anonymous users are sent
-to login and signed-in non-admin users receive the same server-side denial path
-as the rest of the protected admin surface.
+The M12 admin foundation lives under `/admin` and is protected server-side. The
+shared shell allows staff roles needed by subscriber operations, while
+non-subscriber pages assert the stricter admin-only guard before loading data.
+Subscriber operations use the subscriber-admin guard, which allows `admin`,
+`support`, and `editor` roles. Anonymous users are sent to login and signed-in
+users without an allowed staff role receive the same server-side denial path as
+the rest of the protected admin surface.
 
 The dashboard uses existing domain and database ownership:
 
@@ -21,8 +24,10 @@ file-authored posts.
 
 - `/admin` shows launch health metrics for subscribers, paid access, revenue
   placeholder state, pending comments, email sync failures, and webhook failures.
-- `/admin/subscribers` supports subscriber search/filter inspection and a
-  protected CSV export at `/admin/subscribers/export`.
+- `/admin/subscribers` supports subscriber search/filter inspection, protected
+  CSV import at `/admin/subscribers/import`, and protected CSV export at
+  `/admin/subscribers/export`. Import and export write restricted
+  `audit_logs` rows with actor, operation, counts, and failure summaries.
 - `/admin/tiers` shows tiers, entitlement keys, prices, and checkout enablement.
 - `/admin/access` shows entitlement grants.
 - `/admin/comments` shows moderation queues by persisted moderation status.

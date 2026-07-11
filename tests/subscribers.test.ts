@@ -5,7 +5,10 @@ import {
   isMarketingSuppressed,
   isSyncRetryable,
   parseSubscriberCsv,
+  ResendSubscriberSyncWorker,
   SubscriberService,
+  type SubscriberPreferences,
+  type SubscriberProviderSync,
   type SubscriberRecord,
 } from "../src/domains/subscribers";
 
@@ -27,6 +30,31 @@ function subscriber(overrides: Partial<SubscriberRecord> = {}): SubscriberRecord
     source: "free_signup",
     subscribedAt: now,
     metadata: {},
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function preferences(overrides: Partial<SubscriberPreferences> = {}): SubscriberPreferences {
+  return {
+    subscriberId: "sub_1",
+    marketingEmailOptIn: true,
+    productEmailOptIn: true,
+    commentNotificationOptIn: true,
+    metadata: {},
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function sync(overrides: Partial<SubscriberProviderSync> = {}): SubscriberProviderSync {
+  return {
+    id: "sync_1",
+    subscriberId: "sub_1",
+    provider: "resend",
+    syncStatus: "pending",
+    metadata: { pendingReason: "signup" },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -170,5 +198,220 @@ describe("subscriber health states and admin operations", () => {
       "id,email,name,status,source,userId,marketingEmailOptIn,productEmailOptIn,commentNotificationOptIn,syncStatus,syncProvider,createdAt,updatedAt",
     );
     expect(csv).toContain("new@example.com");
+  });
+
+  it("fails import rows with invalid status or boolean cells", async () => {
+    const repository = new InMemorySubscriberRepository();
+    const subscriberService = service(repository);
+    const rows = parseSubscriberCsv(
+      [
+        "email,status,marketingEmailOptIn",
+        "bad-status@example.com,paid,true",
+        "bad-bool@example.com,active,maybe",
+      ].join("\n"),
+    );
+    const result = await subscriberService.importRows("pub_1", rows);
+
+    expect(result).toMatchObject({
+      imported: 0,
+      updated: 0,
+      skipped: 2,
+    });
+    expect(result.errors).toMatchObject([
+      {
+        row: 2,
+        code: "invalid_row",
+        message: "Invalid subscriber status.",
+      },
+      {
+        row: 3,
+        code: "invalid_row",
+        message: "Invalid boolean value for marketingEmailOptIn.",
+      },
+    ]);
+    await expect(subscriberService.search({ publicationId: "pub_1" })).resolves.toEqual([]);
+  });
+});
+
+describe("Resend subscriber sync worker", () => {
+  it("syncs pending rows into the selected Resend audience and marks actual provider state synced", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber({ metadata: { name: "Reader", tierSlug: "founding" } })],
+      preferences: [preferences()],
+      syncs: [sync()],
+    });
+    const contacts: unknown[] = [];
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact(input) {
+          contacts.push(input);
+          return {
+            id: "contact_1",
+            provider: "resend",
+            publicationId: input.publicationId,
+            subscriberId: input.subscriberId,
+            email: input.email,
+            status: input.status ?? "active",
+            audienceIds: input.audienceIds?.slice(0, 1) ?? [],
+            segmentIds: [],
+            fields: input.fields ?? {},
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+      },
+      {
+        paidAudienceId: "aud_paid",
+        tierAudienceIds: { founding: "aud_founding" },
+        now: () => now,
+      },
+    );
+
+    await expect(worker.runPending()).resolves.toEqual({
+      processed: 1,
+      synced: 1,
+      failed: 0,
+    });
+    expect(contacts[0]).toMatchObject({
+      email: "reader@example.com",
+      name: "Reader",
+      audienceIds: ["aud_paid"],
+    });
+    expect(contacts[0]).not.toHaveProperty("segmentIds");
+    expect(contacts[0]).not.toHaveProperty("fields");
+    expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
+      providerContactId: "contact_1",
+      syncStatus: "synced",
+      lastSyncedAt: now,
+      lastError: undefined,
+      metadata: {
+        pendingReason: "signup",
+        audienceIds: ["aud_paid"],
+        syncedReason: "signup",
+      },
+    });
+    expect(repository.findProviderSync("sub_1", "resend")?.metadata).not.toHaveProperty(
+      "segmentIds",
+    );
+  });
+
+  it("marks failed provider calls without requiring live Resend credentials", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber({ status: "suppressed" })],
+      preferences: [preferences({ marketingEmailOptIn: false })],
+      syncs: [sync()],
+    });
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact() {
+          throw new Error("provider unavailable");
+        },
+      },
+      {
+        suppressedAudienceId: "aud_suppressed",
+        now: () => now,
+      },
+    );
+
+    await expect(worker.runPending()).resolves.toEqual({
+      processed: 1,
+      synced: 0,
+      failed: 1,
+    });
+    expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
+      syncStatus: "failed",
+      lastError: "provider unavailable",
+    });
+  });
+
+  it("retries failed provider sync rows", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber()],
+      syncs: [
+        sync({
+          syncStatus: "failed",
+          lastError: "provider unavailable",
+          updatedAt: new Date("2026-07-10T11:59:00.000Z"),
+        }),
+      ],
+    });
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact(input) {
+          return {
+            id: "contact_1",
+            provider: "resend",
+            publicationId: input.publicationId,
+            subscriberId: input.subscriberId,
+            email: input.email,
+            status: input.status ?? "active",
+            audienceIds: input.audienceIds ?? [],
+            segmentIds: [],
+            fields: {},
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+      },
+      { now: () => now },
+    );
+
+    await expect(worker.runPending()).resolves.toEqual({
+      processed: 1,
+      synced: 1,
+      failed: 0,
+    });
+    expect(repository.findProviderSync("sub_1", "resend")).toMatchObject({
+      syncStatus: "synced",
+      lastSyncedAt: now,
+      lastError: undefined,
+    });
+  });
+
+  it("sends suppressed provider status when local preferences opt out", async () => {
+    const repository = new InMemorySubscriberRepository({
+      subscribers: [subscriber({ status: "active" })],
+      preferences: [preferences({ marketingEmailOptIn: false })],
+      syncs: [sync()],
+    });
+    const contacts: unknown[] = [];
+    const worker = new ResendSubscriberSyncWorker(
+      repository,
+      {
+        async upsertContact(input) {
+          contacts.push(input);
+          return {
+            id: "contact_1",
+            provider: "resend",
+            publicationId: input.publicationId,
+            subscriberId: input.subscriberId,
+            email: input.email,
+            status: input.status ?? "active",
+            audienceIds: input.audienceIds ?? [],
+            segmentIds: [],
+            fields: {},
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+      },
+      {
+        suppressedAudienceId: "aud_suppressed",
+        now: () => now,
+      },
+    );
+
+    await expect(worker.runPending()).resolves.toMatchObject({
+      synced: 1,
+      failed: 0,
+    });
+    expect(contacts[0]).toMatchObject({
+      email: "reader@example.com",
+      status: "unsubscribed",
+      audienceIds: ["aud_suppressed"],
+    });
   });
 });

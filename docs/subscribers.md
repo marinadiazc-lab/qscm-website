@@ -1,7 +1,7 @@
 # Subscribers
 
-Status: M05 foundation implemented
-Date: 2026-07-10
+Status: M05 subscriber lifecycle follow-ups implemented
+Date: 2026-07-11
 
 ## Scope
 
@@ -18,10 +18,14 @@ Implemented surfaces:
   intentionally disabled until the product has authenticated access or signed
   preference tokens. Do not allow preference lookup or mutation by plain email
   or subscriber id.
-- `/admin/subscribers` is now a protected read-only subscriber inspection page
-  with search/filter support, account/subscription/email-sync summary columns,
-  and a protected CSV export at `/admin/subscribers/export`.
-  Do not expose subscriber emails, ids, import, or export publicly.
+- `/admin/subscribers` is a protected subscriber inspection page for `admin`,
+  `support`, and `editor` users with search/filter support,
+  account/subscription/email-sync summary columns, protected CSV import at
+  `/admin/subscribers/import`, and protected CSV export at
+  `/admin/subscribers/export`.
+- Import and export persist restricted `audit_logs` entries with actor,
+  operation, counts, and bounded failure summaries. Subscriber emails remain in
+  protected admin surfaces and exports, not audit metadata.
 
 ## Domain Rules
 
@@ -38,14 +42,11 @@ Implemented surfaces:
 - Bounce, complaint, and suppression updates store local reason/provider
   metadata and queue a provider sync.
 - Preference and status changes write `subscriber_provider_syncs` with
-  `provider = resend` and `sync_status = pending`. A live Resend worker can
-  consume those rows later without changing the subscriber service API.
+  `provider = resend` and `sync_status = pending`. `ResendSubscriberSyncWorker`
+  consumes pending rows, mirrors app-owned subscriber status into a Resend
+  contact in one selected audience, and marks rows `synced` or `failed`.
 
-## CSV Import Foundation
-
-Import helpers exist in the domain layer for the future protected admin surface.
-The visible admin import action remains disabled until audited mutation flows
-are wired.
+## CSV Import
 
 Supported input columns:
 
@@ -67,12 +68,32 @@ Export columns:
 
 PII must remain limited to protected admin routes.
 
+## Resend Sync Worker
+
+`ResendSubscriberSyncWorker` accepts an injected `EmailProvider`, so tests can
+use a mock provider without live Resend credentials. Production code can create
+the worker with `createResendSubscriberSyncWorkerFromEnv`, which uses the
+database repository and `createResendEmailProviderFromEnv`.
+
+Audience mapping is configured with:
+
+- `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`
+- `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`
+- `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID`
+
+Suppressed app states (`unsubscribed`, `bounced`, `complained`, `suppressed`)
+and local opt-outs are reflected in the contact sync payload. Paid/tier
+metadata (`paidSubscriber`, `tier`, `tierSlug`, or `subscriptionTier`) chooses
+the first configured audience that the Resend contact upsert can send today.
+The worker records provider-confirmed contact/audience ids only; segment and
+custom-field success should not be inferred until the Resend adapter sends
+those operations.
+
 ## Follow-Ups
 
-- Add admin-auth route protection once M04/M12 admin shell work is merged.
-- Add a Resend worker that reads pending `subscriber_provider_syncs` rows and
-  maps app-owned subscriber state into configured Resend audiences/segments.
-- Add persistent admin operation audit tables if the final admin framework does
-  not provide audit logging.
+- Wire the worker into the production job runner/scheduler once worker
+  infrastructure is selected.
+- Feed paid/tier entitlement projection directly into subscriber sync metadata
+  when the billing access state worker exists.
 - Add signed preference links or authenticated account access before enabling
   the preference center.
