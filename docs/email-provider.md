@@ -11,6 +11,16 @@ broadcast delivery. `ResendEmailProvider` wraps the official SDK behind the
 app-owned boundary so tests can inject in-memory providers or mocked Resend
 clients.
 
+The provider boundary should continue to track Resend's API surface without
+leaking SDK-specific types into app code. Current Resend references for the
+areas used by this domain:
+
+- https://resend.com/docs/api-reference/emails/send-email
+- https://resend.com/docs/api-reference/contacts/create-contact
+- https://resend.com/docs/api-reference/broadcasts/create-broadcast
+- https://resend.com/docs/api-reference/broadcasts/send-broadcast
+- https://resend.com/docs/webhooks/introduction
+
 Required production environment:
 
 - `RESEND_API_KEY`
@@ -89,15 +99,13 @@ headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
 of the process. Durable webhook idempotency must persist `email_provider_events`
 before #52 can close. The in-process processor maps:
 
-- `contact.unsubscribed` to local `unsubscribed`
+- `contact.updated` with `data.unsubscribed: true` to local `unsubscribed`
 - `email.bounced` to local `bounced`
 - `email.complained` to local `complained`
 - `email.suppressed` to local `suppressed`
 
 Delivery events are recorded through the delivery-log foundation for later M12
 admin dashboards.
-
-## Sending Domain And DNS
 
 ## Post Sharing By Email
 
@@ -120,11 +128,12 @@ the raw recipient address only for the provider `to` field at send time.
 Resend requires a verified sending domain before production sends. In the
 dashboard, add the sending domain and copy the generated DNS records exactly to
 the DNS host. Resend documents DKIM/SPF configuration through `TXT` and `MX`
-records, with verification often completing within about 15 minutes but
-occasionally taking up to 72 hours. Add DMARC after the domain verifies.
+records; add DMARC for the production domain as part of the same launch
+checklist.
 
 External access is still required to verify the real production domain in the
 Resend dashboard and DNS provider. Issue #47 should remain open until those
-records are configured and Resend reports the domain verified.
+records are configured and Resend reports the domain verified. This cannot be
+completed from the repo alone.
 
 ## Future Kit Adapter

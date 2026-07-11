@@ -33,7 +33,7 @@ export class EmailProviderEventProcessor {
 
     this.processedEventIds.add(event.id);
 
-    const status = statusForEvent(event.type);
+    const status = statusForEvent(event);
     if (status) {
       await this.options.updateSubscriberStatus?.({
         email: event.recipientEmail,
@@ -65,22 +65,23 @@ export function parseResendWebhookEvent(payload: Record<string, unknown>): Email
   const data = isRecord(payload.data) ? payload.data : {};
   const email = isRecord(data.email) ? data.email : data;
   const createdAt = typeof payload.created_at === "string" ? payload.created_at : undefined;
+  const rawType = String(payload.type ?? "unknown");
 
   return {
-    id: String(payload.id ?? `${payload.type}:${email.id ?? cryptoRandomId()}`),
+    id: String(payload.id ?? fallbackEventId(rawType, payload, data, email)),
     provider: "resend" as EmailProviderKey,
-    type: String(payload.type ?? "unknown"),
+    type: rawType,
     createdAt: createdAt ? new Date(createdAt) : new Date(),
     providerMessageId: stringValue(email.id ?? email.email_id ?? data.email_id),
-    recipientEmail: stringValue(email.to ?? email.recipient ?? data.recipient),
+    recipientEmail: stringValue(email.to ?? email.recipient ?? data.recipient ?? data.email),
     payload,
   };
 }
 
-function statusForEvent(type: string): EmailSubscriberStatus | undefined {
-  switch (type) {
-    case "contact.unsubscribed":
-      return "unsubscribed";
+function statusForEvent(event: EmailProviderEvent): EmailSubscriberStatus | undefined {
+  switch (event.type) {
+    case "contact.updated":
+      return statusForContactUpdate(event.payload);
     case "email.bounced":
       return "bounced";
     case "email.complained":
@@ -114,11 +115,40 @@ function messageForEvent(type: string) {
       return "Recipient mail server permanently rejected the email.";
     case "email.complained":
       return "Recipient marked the message as spam.";
-    case "contact.unsubscribed":
-      return "Recipient unsubscribed through the email provider.";
+    case "contact.updated":
+      return "Resend reported a contact subscription update.";
     default:
       return undefined;
   }
+}
+
+function statusForContactUpdate(
+  payload: Record<string, unknown>,
+): EmailSubscriberStatus | undefined {
+  const data = isRecord(payload.data) ? payload.data : {};
+
+  if (data.unsubscribed === true) {
+    return "unsubscribed";
+  }
+
+  return undefined;
+}
+
+function fallbackEventId(
+  type: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+  email: Record<string, unknown>,
+) {
+  return [
+    type,
+    payload.created_at,
+    email.id ?? data.id ?? data.email ?? email.to ?? email.recipient ?? data.recipient,
+    data.unsubscribed,
+  ]
+    .map((part) => stringValue(part) ?? String(part ?? ""))
+    .filter(Boolean)
+    .join(":") || `${type}:${cryptoRandomId()}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
