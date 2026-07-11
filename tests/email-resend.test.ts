@@ -548,7 +548,7 @@ describe("newsletter broadcasts", () => {
   it("persists local broadcast and send records around provider calls", async () => {
     const broadcastRepository = new InMemoryEmailBroadcastRepository(() => now);
     const sendIntentRepository = new InMemoryEmailSendIntentRepository(() => now);
-    const provider = new InMemoryEmailProvider(() => now);
+    const provider = new InMemoryEmailProvider({ now: () => now });
     const sendService = new EmailSendService(sendIntentRepository, provider);
     const broadcastService = new EmailBroadcastService(
       broadcastRepository,
