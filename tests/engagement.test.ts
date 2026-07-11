@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getPostBySlug } from "../src/content/posts";
 import { InMemoryEmailProvider } from "../src/domains/email";
 import {
@@ -348,23 +348,15 @@ describe("engagement service", () => {
   });
 
   it("requires a private identifier hash salt in production", () => {
-    const originalNodeEnv = process.env.NODE_ENV;
-    const originalSalt = process.env.ENGAGEMENT_HASH_SALT;
-
-    process.env.NODE_ENV = "production";
-    delete process.env.ENGAGEMENT_HASH_SALT;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ENGAGEMENT_HASH_SALT", "");
 
     try {
       expect(
         () => new EngagementService(new InMemoryEngagementRepository(["welcome"])),
       ).toThrow(/ENGAGEMENT_HASH_SALT/);
     } finally {
-      process.env.NODE_ENV = originalNodeEnv;
-      if (originalSalt === undefined) {
-        delete process.env.ENGAGEMENT_HASH_SALT;
-      } else {
-        process.env.ENGAGEMENT_HASH_SALT = originalSalt;
-      }
+      vi.unstubAllEnvs();
     }
   });
 
