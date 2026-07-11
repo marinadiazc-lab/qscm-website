@@ -129,6 +129,7 @@ export function createKeywordSpamCheck(
 export interface ScopedRateLimitCheckOptions {
   windowMs?: number;
   maxAttempts?: number;
+  postMaxAttempts?: number;
   action?: string;
   store?: RateLimitStore;
 }
@@ -147,19 +148,23 @@ export function createScopedRateLimitCheck(
 ): ModerationCheck {
   const windowMs = options.windowMs ?? 10 * 60 * 1000;
   const maxAttempts = options.maxAttempts ?? 5;
+  const postMaxAttempts = options.postMaxAttempts ?? maxAttempts * 20;
   const action = options.action ?? "comment";
   const store = options.store ?? new InMemoryRateLimitStore();
 
   return {
     name: "scoped_rate_limit",
     decide(input) {
-      const scopes = rateLimitScopes(input);
+      const scopes = rateLimitScopes(input, {
+        maxAttempts,
+        postMaxAttempts,
+      });
 
       for (const scope of scopes) {
-        const limitKey = `${action}:${scope}`;
+        const limitKey = `${action}:${scope.key}`;
         const state = store.increment(limitKey, input.submittedAt, windowMs);
 
-        if (state.count > maxAttempts) {
+        if (state.count > scope.maxAttempts) {
           const retryAfterSeconds = Math.ceil(
             Math.max(0, state.resetAt.getTime() - input.submittedAt.getTime()) /
               1000,
@@ -170,7 +175,7 @@ export function createScopedRateLimitCheck(
             outcome: "block",
             reason: "Scoped engagement rate limit exceeded.",
             limitKey,
-            limit: maxAttempts,
+            limit: scope.maxAttempts,
             remaining: 0,
             retryAfterSeconds,
             metadata: {
@@ -213,19 +218,25 @@ export class InMemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-function rateLimitScopes(input: ModerationCheckInput): string[] {
+function rateLimitScopes(
+  input: ModerationCheckInput,
+  limits: { maxAttempts: number; postMaxAttempts: number },
+): { key: string; maxAttempts: number }[] {
   return [
-    `post:${input.postSlug}`,
+    {
+      key: `post:${input.postSlug}`,
+      maxAttempts: limits.postMaxAttempts,
+    },
     input.requestContext?.ipHash
-      ? `ip:${input.requestContext.ipHash}`
+      ? { key: `ip:${input.requestContext.ipHash}`, maxAttempts: limits.maxAttempts }
       : undefined,
     input.requestContext?.emailHash
-      ? `email:${input.requestContext.emailHash}`
+      ? { key: `email:${input.requestContext.emailHash}`, maxAttempts: limits.maxAttempts }
       : undefined,
     input.registeredUserId
-      ? `user:${input.registeredUserId}`
+      ? { key: `user:${input.registeredUserId}`, maxAttempts: limits.maxAttempts }
       : undefined,
-  ].filter((scope): scope is string => Boolean(scope));
+  ].filter((scope): scope is { key: string; maxAttempts: number } => Boolean(scope));
 }
 
 function spamDecision(

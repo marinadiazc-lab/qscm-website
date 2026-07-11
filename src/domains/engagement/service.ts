@@ -10,7 +10,7 @@ import {
   type RateLimitDecision,
   type RateLimitStore,
 } from "../moderation";
-import type { EngagementRepository } from "./repository";
+import type { EngagementRateLimitScope, EngagementRepository } from "./repository";
 import type {
   CommentSubmissionInput,
   CommentSubmissionResult,
@@ -43,7 +43,7 @@ export type EngagementServiceOptions = {
     windowSeconds: number;
     maxAttempts: number;
   };
-  scopedRateLimitStore?: RateLimitStore;
+  scopedRateLimitStore?: RateLimitStore | null;
   identifierHashSalt?: string;
 };
 
@@ -60,7 +60,7 @@ export class EngagementService {
   private readonly commentRateLimit: Required<EngagementServiceOptions>["commentRateLimit"];
   private readonly likeRateLimit: Required<EngagementServiceOptions>["likeRateLimit"];
   private readonly emailShareRateLimit: Required<EngagementServiceOptions>["emailShareRateLimit"];
-  private readonly scopedRateLimitStore: RateLimitStore;
+  private readonly scopedRateLimitStore?: RateLimitStore;
   private readonly identifierHashSalt: string;
 
   constructor(
@@ -71,11 +71,11 @@ export class EngagementService {
     this.commentRateLimit = options.commentRateLimit ?? defaultCommentLimit;
     this.likeRateLimit = options.likeRateLimit ?? defaultLikeLimit;
     this.emailShareRateLimit = options.emailShareRateLimit ?? defaultEmailShareLimit;
-    this.scopedRateLimitStore = options.scopedRateLimitStore ?? new InMemoryRateLimitStore();
-    this.identifierHashSalt =
-      options.identifierHashSalt ??
-      process.env.ENGAGEMENT_HASH_SALT ??
-      defaultIdentifierHashSalt;
+    this.scopedRateLimitStore =
+      options.scopedRateLimitStore === undefined
+        ? new InMemoryRateLimitStore()
+        : options.scopedRateLimitStore ?? undefined;
+    this.identifierHashSalt = resolveIdentifierHashSalt(options.identifierHashSalt);
   }
 
   async getSummary(postSlug: string, actor?: EngagementActor): Promise<EngagementSummary> {
@@ -120,7 +120,7 @@ export class EngagementService {
       "comment",
       moderationInput,
       this.commentRateLimit,
-      (since) => this.repository.countRecentComments(actorRateLimitKey(normalized.actor), since),
+      (scope, since) => this.repository.countRecentComments(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -194,7 +194,7 @@ export class EngagementService {
         requestContext: sanitizeEngagementRequestContext(input.requestContext),
       },
       this.likeRateLimit,
-      (since) => this.repository.countRecentLikes(actorRateLimitKey(input.actor), since),
+      (scope, since) => this.repository.countRecentLikes(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -248,7 +248,7 @@ export class EngagementService {
       "share_email",
       moderationInput,
       this.emailShareRateLimit,
-      (since) => this.repository.countRecentShares(actorRateLimitKey(normalized.actor), since),
+      (scope, since) => this.repository.countRecentShares(scope, since),
     );
 
     if (rateLimit.limited) {
@@ -340,36 +340,50 @@ export class EngagementService {
     action: string,
     input: EngagementModerationInput,
     limit: { windowSeconds: number; maxAttempts: number },
-    countRecent: (since: Date) => Promise<number>,
+    countRecent: (scope: EngagementRateLimitScope, since: Date) => Promise<number>,
   ) {
-    const scopedDecision = createScopedRateLimitCheck({
-      action,
-      windowMs: limit.windowSeconds * 1000,
-      maxAttempts: limit.maxAttempts,
-      store: this.scopedRateLimitStore,
-    }).decide(input) as RateLimitDecision | undefined;
+    if (this.scopedRateLimitStore) {
+      const scopedDecision = createScopedRateLimitCheck({
+        action,
+        windowMs: limit.windowSeconds * 1000,
+        maxAttempts: limit.maxAttempts,
+        store: this.scopedRateLimitStore,
+      }).decide(input) as RateLimitDecision | undefined;
 
-    if (scopedDecision?.outcome === "block") {
-      return {
-        limited: true as const,
-        retryAfterSeconds: scopedDecision.retryAfterSeconds ?? limit.windowSeconds,
-      };
+      if (scopedDecision?.outcome === "block") {
+        return {
+          limited: true as const,
+          retryAfterSeconds: scopedDecision.retryAfterSeconds ?? limit.windowSeconds,
+        };
+      }
     }
 
-    const actorHash = input.requestContext?.anonymousActorHash ?? input.registeredUserId;
-    if (!actorHash) {
+    const actorScope = actorRateLimitScope(input);
+    const postScope = input.postSlug ? { postSlug: input.postSlug } : undefined;
+
+    if (!hasRateLimitScope(actorScope) && !postScope) {
       return { limited: false as const };
     }
 
     const now = this.now();
     const since = new Date(now.getTime() - limit.windowSeconds * 1000);
-    const count = await countRecent(since);
+    const actorCount = hasRateLimitScope(actorScope) ? await countRecent(actorScope, since) : 0;
 
-    if (count >= limit.maxAttempts) {
+    if (actorCount >= limit.maxAttempts) {
       return {
         limited: true as const,
         retryAfterSeconds: limit.windowSeconds,
       };
+    }
+
+    if (postScope) {
+      const postCount = await countRecent(postScope, since);
+      if (postCount >= postRateLimitMaxAttempts(limit.maxAttempts)) {
+        return {
+          limited: true as const,
+          retryAfterSeconds: limit.windowSeconds,
+        };
+      }
     }
 
     return { limited: false as const };
@@ -500,6 +514,42 @@ function actorRateLimitKey(actor: EngagementActor) {
 
 function registeredUserId(actor: EngagementActor) {
   return actor.kind === "registered_user" ? actor.userId : undefined;
+}
+
+function actorRateLimitScope(input: EngagementModerationInput): EngagementRateLimitScope {
+  return {
+    anonymousActorHash: input.requestContext?.anonymousActorHash,
+    ipHash: input.requestContext?.ipHash,
+    emailHash: input.requestContext?.emailHash,
+    registeredUserId: input.registeredUserId,
+  };
+}
+
+function hasRateLimitScope(scope: EngagementRateLimitScope) {
+  return Boolean(
+    scope.anonymousActorHash ||
+      scope.ipHash ||
+      scope.emailHash ||
+      scope.registeredUserId,
+  );
+}
+
+function postRateLimitMaxAttempts(maxAttempts: number) {
+  return maxAttempts * 20;
+}
+
+function resolveIdentifierHashSalt(configuredSalt: string | undefined) {
+  const salt = configuredSalt ?? process.env.ENGAGEMENT_HASH_SALT;
+
+  if (salt) {
+    return salt;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("ENGAGEMENT_HASH_SALT is required in production.");
+  }
+
+  return defaultIdentifierHashSalt;
 }
 
 function shareRequestContext(input: SharePostByEmailInput, hashIdentifier: HashIdentifier) {

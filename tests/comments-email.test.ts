@@ -180,7 +180,7 @@ describe("comments", () => {
     });
   });
 
-  it("rate limits by post and IP hash scopes independently", () => {
+  it("rate limits by IP hash without applying actor limits to the post-wide scope", () => {
     const store = new InMemoryRateLimitStore();
     const check = createScopedRateLimitCheck({ maxAttempts: 1, store });
     const makeComment = (id: string, postSlug: string, ipHash: string) =>
@@ -201,7 +201,7 @@ describe("comments", () => {
     expect(first).toMatchObject({ ok: true });
     expect(samePostDifferentIp).toMatchObject({
       ok: true,
-      comment: { moderationStatus: "blocked" },
+      comment: { moderationStatus: "approved" },
     });
     expect(differentPostSameIp).toMatchObject({
       ok: true,

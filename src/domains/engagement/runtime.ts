@@ -21,12 +21,14 @@ export async function getEngagementService() {
         resolvePostMetadata: resolvePostMetadataFromMdx,
       }),
       {
-        scopedRateLimitStore: runtimeRateLimitStore,
+        identifierHashSalt: getEngagementHashSalt(),
+        scopedRateLimitStore: null,
       },
     );
   }
 
   return new EngagementService(fallbackRepository, {
+    identifierHashSalt: getEngagementHashSalt(),
     scopedRateLimitStore: runtimeRateLimitStore,
   });
 }
@@ -37,7 +39,7 @@ export async function getRequestEngagementContext() {
   const actorId = cookieStore.get(actorCookieName)?.value ?? randomUUID();
   const ip = firstForwardedValue(headerStore.get("x-forwarded-for")) ?? "unknown";
   const userAgent = headerStore.get("user-agent") ?? "unknown";
-  const salt = process.env.ENGAGEMENT_HASH_SALT ?? "qscm-dev-engagement-salt";
+  const salt = getEngagementHashSalt();
   const anonymousActorHash = hashValue(`${salt}:${actorId}`);
   const auth = await getCurrentAuthSession();
   const requestContext: EngagementRequestContext = {
@@ -85,4 +87,18 @@ function hashValue(value: string) {
 
 function firstForwardedValue(value: string | null) {
   return value?.split(",")[0]?.trim();
+}
+
+function getEngagementHashSalt() {
+  const salt = process.env.ENGAGEMENT_HASH_SALT;
+
+  if (salt) {
+    return salt;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("ENGAGEMENT_HASH_SALT is required in production.");
+  }
+
+  return "qscm-dev-engagement-salt";
 }

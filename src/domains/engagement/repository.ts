@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, sql, type SQL } from "drizzle-orm";
 import type { db } from "@/src/db";
 import * as schema from "@/src/db/schema";
 import type { ModerationAuditEntry, ModerationDecision, ModerationStatus } from "../moderation";
@@ -35,14 +35,22 @@ export type StoreShareInput = {
   now: Date;
 };
 
+export type EngagementRateLimitScope = {
+  postSlug?: string;
+  anonymousActorHash?: string;
+  ipHash?: string;
+  emailHash?: string;
+  registeredUserId?: string;
+};
+
 export interface EngagementRepository {
   postExists(postSlug: string): Promise<boolean>;
   listApprovedComments(postSlug: string): Promise<EngagementComment[]>;
   listModerationQueue(status?: ModerationStatus): Promise<ModerationQueueItem[]>;
   storeComment(input: StoreCommentInput): Promise<EngagementComment | undefined>;
-  countRecentComments(actorHash: string, since: Date): Promise<number>;
-  countRecentShares(actorHash: string, since: Date): Promise<number>;
-  countRecentLikes(actorHash: string, since: Date): Promise<number>;
+  countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number>;
+  countRecentShares(scope: EngagementRateLimitScope, since: Date): Promise<number>;
+  countRecentLikes(scope: EngagementRateLimitScope, since: Date): Promise<number>;
   hasLiked(postSlug: string, actor: EngagementActor): Promise<boolean>;
   likePost(postSlug: string, actor: EngagementActor, now: Date): Promise<boolean>;
   countLikes(postSlug: string): Promise<number>;
@@ -187,46 +195,81 @@ export class PostgresEngagementRepository implements EngagementRepository {
     return toPublicComment(input.postSlug, comment);
   }
 
-  async countRecentComments(actorHash: string, since: Date): Promise<number> {
-    const [row] = await this.db
-      .select({ value: count() })
-      .from(schema.comments)
-      .where(
-        and(
-          gte(schema.comments.createdAt, since),
-          sql`${schema.comments.requestContext}->>'anonymousActorHash' = ${actorHash}`,
-        ),
-      );
+  async countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    const scopeConditions = commentScopeConditions(scope);
+    let maxCount = 0;
 
-    return row?.value ?? 0;
+    for (const condition of scopeConditions) {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(schema.comments)
+        .innerJoin(schema.postMetadata, eq(schema.comments.postId, schema.postMetadata.id))
+        .where(
+          and(
+            gte(schema.comments.createdAt, since),
+            scope.postSlug ? eq(schema.postMetadata.slug, scope.postSlug) : undefined,
+            condition,
+          ),
+        );
+
+      maxCount = Math.max(maxCount, row?.value ?? 0);
+    }
+
+    return maxCount;
   }
 
-  async countRecentShares(actorHash: string, since: Date): Promise<number> {
-    const [row] = await this.db
-      .select({ value: count() })
-      .from(schema.postShares)
-      .where(
-        and(
-          gte(schema.postShares.createdAt, since),
-          eq(schema.postShares.anonymousActorHash, actorHash),
-        ),
-      );
+  async countRecentShares(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    const scopeConditions = shareScopeConditions(scope);
+    let maxCount = 0;
 
-    return row?.value ?? 0;
+    for (const condition of scopeConditions) {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(schema.postShares)
+        .innerJoin(schema.postMetadata, eq(schema.postShares.postId, schema.postMetadata.id))
+        .where(
+          and(
+            gte(schema.postShares.createdAt, since),
+            scope.postSlug ? eq(schema.postMetadata.slug, scope.postSlug) : undefined,
+            condition,
+          ),
+        );
+
+      maxCount = Math.max(maxCount, row?.value ?? 0);
+    }
+
+    return maxCount;
   }
 
-  async countRecentLikes(actorHash: string, since: Date): Promise<number> {
-    const [row] = await this.db
-      .select({ value: count() })
-      .from(schema.postReactions)
-      .where(
-        and(
-          gte(schema.postReactions.createdAt, since),
-          eq(schema.postReactions.anonymousActorHash, actorHash),
-        ),
-      );
+  async countRecentLikes(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    const scopeConditions = reactionScopeConditions(scope);
+    let maxCount = 0;
 
-    return row?.value ?? 0;
+    if (scopeConditions.length === 0 && scope.postSlug) {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(schema.postReactions)
+        .innerJoin(schema.postMetadata, eq(schema.postReactions.postId, schema.postMetadata.id))
+        .where(
+          and(
+            gte(schema.postReactions.createdAt, since),
+            eq(schema.postMetadata.slug, scope.postSlug),
+          ),
+        );
+
+      return row?.value ?? 0;
+    }
+
+    for (const condition of scopeConditions) {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(schema.postReactions)
+        .where(and(gte(schema.postReactions.createdAt, since), condition));
+
+      maxCount = Math.max(maxCount, row?.value ?? 0);
+    }
+
+    return maxCount;
   }
 
   async hasLiked(postSlug: string, actor: EngagementActor): Promise<boolean> {
@@ -366,7 +409,7 @@ export class InMemoryEngagementRepository implements EngagementRepository {
   private readonly knownPosts = new Set<string>();
   private readonly comments: (StoreCommentInput & { id: string })[] = [];
   private readonly likes = new Set<string>();
-  private readonly likeEvents: { actorHash: string; createdAt: Date }[] = [];
+  private readonly likeEvents: { actorHash: string; postSlug: string; createdAt: Date }[] = [];
   private readonly shares: StoreShareInput[] = [];
   private nextId = 1;
 
@@ -408,21 +451,55 @@ export class InMemoryEngagementRepository implements EngagementRepository {
     return storedInputToComment(stored.id, stored);
   }
 
-  async countRecentComments(actorHash: string, since: Date): Promise<number> {
-    return this.comments.filter(
-      (comment) =>
-        comment.requestContext?.anonymousActorHash === actorHash && comment.now >= since,
-    ).length;
+  async countRecentComments(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    return maxCountByScope(
+      this.comments.filter((comment) => comment.now >= since),
+      scope,
+      (comment) => ({
+        postSlug: comment.postSlug,
+        anonymousActorHash: comment.requestContext?.anonymousActorHash,
+        ipHash: comment.requestContext?.ipHash,
+        emailHash: comment.requestContext?.emailHash,
+        registeredUserId: comment.registeredUserId,
+      }),
+    );
   }
 
-  async countRecentShares(actorHash: string, since: Date): Promise<number> {
-    return this.shares.filter(
-      (share) => share.actor.anonymousActorHash === actorHash && share.now >= since,
-    ).length;
+  async countRecentShares(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    return maxCountByScope(
+      this.shares.filter((share) => share.now >= since),
+      scope,
+      (share) => ({
+        postSlug: share.postSlug,
+        anonymousActorHash: share.actor.anonymousActorHash,
+        ipHash: share.requestContext?.ipHash,
+        emailHash: share.requestContext?.emailHash,
+        registeredUserId: share.actor.kind === "registered_user" ? share.actor.userId : undefined,
+      }),
+    );
   }
 
-  async countRecentLikes(actorHash: string, since: Date): Promise<number> {
-    return this.likeEvents.filter((event) => event.actorHash === actorHash && event.createdAt >= since).length;
+  async countRecentLikes(scope: EngagementRateLimitScope, since: Date): Promise<number> {
+    const scopeKeys = [
+      scope.anonymousActorHash,
+      scope.registeredUserId,
+    ].filter((value): value is string => Boolean(value));
+
+    if (scopeKeys.length === 0 && scope.postSlug) {
+      return this.likeEvents.filter(
+        (event) => event.postSlug === scope.postSlug && event.createdAt >= since,
+      ).length;
+    }
+
+    return Math.max(
+      0,
+      ...scopeKeys.map(
+        (scopeKey) =>
+          this.likeEvents.filter(
+            (event) => event.actorHash === scopeKey && event.createdAt >= since,
+          ).length,
+      ),
+    );
   }
 
   async hasLiked(postSlug: string, actor: EngagementActor): Promise<boolean> {
@@ -433,7 +510,7 @@ export class InMemoryEngagementRepository implements EngagementRepository {
     if (!(await this.postExists(postSlug))) return false;
 
     this.likes.add(likeKey(postSlug, actor));
-    this.likeEvents.push({ actorHash: actorRateLimitKey(actor), createdAt: now });
+    this.likeEvents.push({ actorHash: actorRateLimitKey(actor), postSlug, createdAt: now });
     return true;
   }
 
@@ -495,6 +572,100 @@ function actorWhere(actor: EngagementActor) {
   }
 
   return eq(schema.postReactions.anonymousActorHash, actor.anonymousActorHash);
+}
+
+function commentScopeConditions(scope: EngagementRateLimitScope) {
+  const conditions: SQL[] = [];
+
+  if (scope.anonymousActorHash) {
+    conditions.push(
+      sql`${schema.comments.requestContext}->>'anonymousActorHash' = ${scope.anonymousActorHash}`,
+    );
+  }
+  if (scope.ipHash) {
+    conditions.push(sql`${schema.comments.requestContext}->>'ipHash' = ${scope.ipHash}`);
+  }
+  if (scope.emailHash) {
+    conditions.push(sql`${schema.comments.requestContext}->>'emailHash' = ${scope.emailHash}`);
+  }
+  if (scope.registeredUserId) {
+    conditions.push(eq(schema.comments.registeredUserId, scope.registeredUserId));
+  }
+  if (conditions.length === 0 && scope.postSlug) {
+    conditions.push(sql`true`);
+  }
+
+  return conditions;
+}
+
+function shareScopeConditions(scope: EngagementRateLimitScope) {
+  const conditions: SQL[] = [];
+
+  if (scope.anonymousActorHash) {
+    conditions.push(eq(schema.postShares.anonymousActorHash, scope.anonymousActorHash));
+  }
+  if (scope.ipHash) {
+    conditions.push(sql`${schema.postShares.requestContext}->>'ipHash' = ${scope.ipHash}`);
+  }
+  if (scope.emailHash) {
+    conditions.push(sql`${schema.postShares.requestContext}->>'emailHash' = ${scope.emailHash}`);
+  }
+  if (scope.registeredUserId) {
+    conditions.push(eq(schema.postShares.userId, scope.registeredUserId));
+  }
+  if (conditions.length === 0 && scope.postSlug) {
+    conditions.push(sql`true`);
+  }
+
+  return conditions;
+}
+
+function reactionScopeConditions(scope: EngagementRateLimitScope) {
+  const conditions: SQL[] = [];
+
+  if (scope.anonymousActorHash) {
+    conditions.push(eq(schema.postReactions.anonymousActorHash, scope.anonymousActorHash));
+  }
+  if (scope.registeredUserId) {
+    conditions.push(eq(schema.postReactions.userId, scope.registeredUserId));
+  }
+
+  return conditions;
+}
+
+function maxCountByScope<T>(
+  items: T[],
+  scope: EngagementRateLimitScope,
+  project: (item: T) => EngagementRateLimitScope,
+) {
+  const scopeMatchers: Array<(itemScope: EngagementRateLimitScope) => boolean> = [];
+
+  if (scope.anonymousActorHash) {
+    scopeMatchers.push((itemScope) => itemScope.anonymousActorHash === scope.anonymousActorHash);
+  }
+  if (scope.ipHash) {
+    scopeMatchers.push((itemScope) => itemScope.ipHash === scope.ipHash);
+  }
+  if (scope.emailHash) {
+    scopeMatchers.push((itemScope) => itemScope.emailHash === scope.emailHash);
+  }
+  if (scope.registeredUserId) {
+    scopeMatchers.push((itemScope) => itemScope.registeredUserId === scope.registeredUserId);
+  }
+  if (scopeMatchers.length === 0 && scope.postSlug) {
+    scopeMatchers.push((itemScope) => itemScope.postSlug === scope.postSlug);
+  }
+
+  return Math.max(
+    0,
+    ...scopeMatchers.map(
+      (matches) =>
+        items.filter((item) => {
+          const itemScope = project(item);
+          return (!scope.postSlug || itemScope.postSlug === scope.postSlug) && matches(itemScope);
+        }).length,
+    ),
+  );
 }
 
 function likeKey(postSlug: string, actor: EngagementActor) {

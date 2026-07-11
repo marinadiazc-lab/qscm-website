@@ -117,6 +117,7 @@ describe("engagement service", () => {
     const service = new EngagementService(repository, {
       now: () => now,
       commentRateLimit: { windowSeconds: 600, maxAttempts: 1 },
+      scopedRateLimitStore: null,
     });
 
     expect(
@@ -248,6 +249,7 @@ describe("engagement service", () => {
     const service = new EngagementService(repository, {
       now: () => now,
       likeRateLimit: { windowSeconds: 60, maxAttempts: 1 },
+      scopedRateLimitStore: null,
     });
 
     expect(
@@ -343,6 +345,27 @@ describe("engagement service", () => {
       status: "recorded",
     });
     expect(emailProvider.listSentResults()).toHaveLength(0);
+  });
+
+  it("requires a private identifier hash salt in production", () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalSalt = process.env.ENGAGEMENT_HASH_SALT;
+
+    process.env.NODE_ENV = "production";
+    delete process.env.ENGAGEMENT_HASH_SALT;
+
+    try {
+      expect(
+        () => new EngagementService(new InMemoryEngagementRepository(["welcome"])),
+      ).toThrow(/ENGAGEMENT_HASH_SALT/);
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      if (originalSalt === undefined) {
+        delete process.env.ENGAGEMENT_HASH_SALT;
+      } else {
+        process.env.ENGAGEMENT_HASH_SALT = originalSalt;
+      }
+    }
   });
 
   it("maps a valid Markdown post into database post metadata for engagement persistence", () => {
