@@ -27,7 +27,10 @@ export async function POST(request: Request, context: RouteContext) {
     postTitle: post?.title ?? slug,
     postUrl: post?.canonicalUrl ?? `${origin}/posts/${slug}`,
     actor,
-    requestContext,
+    requestContext: {
+      ...requestContext,
+      formAgeMs: parseFormAgeMs(body.formAgeMs),
+    },
     emailProvider: createNoopEmailProvider(),
     publicationId: post?.publicationId,
   });
@@ -46,4 +49,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   return response;
+}
+
+function parseFormAgeMs(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : -1;
 }

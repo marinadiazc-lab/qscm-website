@@ -17,8 +17,8 @@ Commenter email addresses and website URLs are private fields. They can be used 
 
 Launch checks currently include:
 
-- honeypot fields on comment and email-share forms
-- short rolling rate limits for comments, likes, and email shares keyed by a privacy-preserving anonymous actor hash
+- honeypot and form-age timing fields on comment and email-share forms
+- short rolling rate limits for comments, likes, and email shares keyed by privacy-preserving post, IP hash, email hash, anonymous actor hash, and authenticated user scopes where available
 - basic spam signals for blocked phrases, high link volume, and optional website URLs
 
 Honeypot inputs are converted to boolean abuse signals before persistence. Raw honeypot payloads, raw IP addresses, and raw email addresses should not be stored in moderation context or audit metadata.
@@ -35,9 +35,11 @@ The moderation domain includes reusable checks for launch-time abuse controls:
 
 - `createHoneypotTimingCheck` blocks or holds submissions when a hidden honeypot field is filled, the form is submitted too quickly, the form age is invalid, or the form age is stale.
 - `createKeywordSpamCheck` blocks known spam phrases and can hold suspicious keyword matches for moderator review.
-- `createScopedRateLimitCheck` applies process-local rolling limits by available actor-specific scopes: IP hash plus post, email hash plus post, and registered user id plus post.
+- `createScopedRateLimitCheck` applies process-local rolling limits by available actor-specific scopes: post slug, IP hash, email hash, and registered user id.
 
 Request context must pass hashed identifiers only. Raw IP addresses and raw email addresses should not be stored in moderation context or audit metadata. The in-memory rate-limit store is suitable for local development and narrow launch protection, but production should attach a durable shared store before relying on limits across server instances.
+
+For #198, the engagement runtime shares one process-local scoped rate-limit store per server process and still keeps the existing repository-backed anonymous actor counts for comments, likes, and shares. A new durable rate-limit event table was not added in this pass because the current engagement schema already records the canonical comment/share/like events, while separate pre-write rate-limit events would need migration, cleanup, and cross-instance contention design. Until that follow-up is built, launches with multiple server processes can enforce the new post/IP/email/user scopes only within each process.
 
 ## Moderator Queue Contract
 
@@ -49,4 +51,4 @@ The admin-authenticated queue UI and approve/reject/delete actions remain tracke
 
 - #191: wire the production email provider, durable share intents, dedupe, sender identity, and private recipient storage policy.
 - #192: attach moderator/admin auth and queue actions.
-- #198: replace process-local rate limits with durable shared storage if production deployment needs cross-instance enforcement.
+- #198 follow-up: replace process-local scoped rate limits with durable shared storage if production deployment needs cross-instance enforcement.

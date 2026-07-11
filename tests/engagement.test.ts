@@ -127,6 +127,43 @@ describe("engagement service", () => {
     });
   });
 
+  it("holds comments submitted faster than the launch timing window", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const service = new EngagementService(repository, { now: () => now });
+    const result = await service.submitComment({
+      postSlug: "welcome",
+      body: "Too quick",
+      name: "Speedy",
+      email: "speedy@example.com",
+      actor,
+      requestContext: {
+        anonymousActorHash: actor.anonymousActorHash,
+        formAgeMs: 250,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "held",
+    });
+    expect(await repository.listModerationQueue()).toMatchObject([
+      {
+        moderationStatus: "suspicious",
+        moderationAudit: [
+          {
+            decision: {
+              source: "system",
+              outcome: "suspicious",
+              metadata: {
+                signal: "fast_submit",
+              },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("returns field errors for invalid comment submissions", async () => {
     const repository = new InMemoryEngagementRepository(["welcome"]);
     const service = new EngagementService(repository, { now: () => now });
@@ -147,6 +184,78 @@ describe("engagement service", () => {
         name: "Name is required.",
         email: "A valid email is required.",
       },
+    });
+  });
+
+  it("rate limits comments by scoped email hash even when the actor cookie changes", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      commentRateLimit: { windowSeconds: 600, maxAttempts: 1 },
+    });
+
+    expect(
+      await service.submitComment({
+        postSlug: "welcome",
+        body: "First",
+        name: "Ada",
+        email: "ada@example.com",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_email_1" },
+        requestContext: { anonymousActorHash: "actor_hash_email_1" },
+      }),
+    ).toMatchObject({
+      ok: true,
+      status: "published",
+    });
+    expect(
+      await service.submitComment({
+        postSlug: "scheduled-briefing",
+        body: "Second",
+        name: "Ada",
+        email: "ada@example.com",
+        actor: { kind: "anonymous", anonymousActorHash: "actor_hash_email_2" },
+        requestContext: { anonymousActorHash: "actor_hash_email_2" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
+    });
+  });
+
+  it("rate limits authenticated users by user id when anonymous actor hashes differ", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome", "scheduled-briefing"]);
+    const service = new EngagementService(repository, {
+      now: () => now,
+      likeRateLimit: { windowSeconds: 60, maxAttempts: 1 },
+    });
+
+    expect(
+      await service.likePost({
+        postSlug: "welcome",
+        actor: {
+          kind: "registered_user",
+          userId: "user_1",
+          anonymousActorHash: "actor_hash_user_1",
+        },
+        requestContext: { anonymousActorHash: "actor_hash_user_1" },
+      }),
+    ).toMatchObject({
+      ok: true,
+      likeCount: 1,
+    });
+    expect(
+      await service.likePost({
+        postSlug: "scheduled-briefing",
+        actor: {
+          kind: "registered_user",
+          userId: "user_1",
+          anonymousActorHash: "actor_hash_user_2",
+        },
+        requestContext: { anonymousActorHash: "actor_hash_user_2" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      status: "rate_limited",
     });
   });
 
@@ -187,6 +296,32 @@ describe("engagement service", () => {
     expect(emailProvider.listSentResults()[0].dedupeKey).toMatch(
       /share:welcome:actor_hash_2:[a-f0-9]{64}/,
     );
+  });
+
+  it("records but does not queue email shares submitted too quickly", async () => {
+    const repository = new InMemoryEngagementRepository(["welcome"]);
+    const emailProvider = new InMemoryEmailProvider({ now: () => now });
+    const service = new EngagementService(repository, { now: () => now });
+
+    expect(
+      await service.sharePostByEmail({
+        postSlug: "welcome",
+        recipientEmail: "friend@example.com",
+        postTitle: "Welcome",
+        postUrl: "https://example.com/posts/welcome",
+        actor,
+        requestContext: {
+          anonymousActorHash: actor.anonymousActorHash,
+          formAgeMs: 250,
+        },
+        emailProvider,
+        publicationId: "pub_1",
+      }),
+    ).toMatchObject({
+      ok: true,
+      status: "recorded",
+    });
+    expect(emailProvider.listSentResults()).toHaveLength(0);
   });
 
   it("maps a valid Markdown post into database post metadata for engagement persistence", () => {

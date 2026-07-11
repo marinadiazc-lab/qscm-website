@@ -215,14 +215,15 @@ export class InMemoryRateLimitStore implements RateLimitStore {
 
 function rateLimitScopes(input: ModerationCheckInput): string[] {
   return [
+    `post:${input.postSlug}`,
     input.requestContext?.ipHash
-      ? `post:${input.postSlug}:ip:${input.requestContext.ipHash}`
+      ? `ip:${input.requestContext.ipHash}`
       : undefined,
     input.requestContext?.emailHash
-      ? `post:${input.postSlug}:email:${input.requestContext.emailHash}`
+      ? `email:${input.requestContext.emailHash}`
       : undefined,
     input.registeredUserId
-      ? `post:${input.postSlug}:user:${input.registeredUserId}`
+      ? `user:${input.registeredUserId}`
       : undefined,
   ].filter((scope): scope is string => Boolean(scope));
 }

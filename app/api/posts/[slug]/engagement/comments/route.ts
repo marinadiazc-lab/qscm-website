@@ -20,7 +20,10 @@ export async function POST(request: Request, context: RouteContext) {
     website: body.website ? String(body.website) : undefined,
     honeypot: body.company ? String(body.company) : undefined,
     actor,
-    requestContext,
+    requestContext: {
+      ...requestContext,
+      formAgeMs: parseFormAgeMs(body.formAgeMs),
+    },
   });
   const response = NextResponse.json(result, {
     status: result.ok ? 200 : result.status === "rate_limited" ? 429 : 400,
@@ -37,4 +40,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   return response;
+}
+
+function parseFormAgeMs(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : -1;
 }

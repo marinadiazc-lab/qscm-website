@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import {
+  InMemoryRateLimitStore,
+  createHoneypotTimingCheck,
+  createScopedRateLimitCheck,
   moderationStatusForDecisions,
   toModerationAuditEntries,
+  type ModerationCheckInput,
   type ModerationDecision,
+  type RateLimitDecision,
+  type RateLimitStore,
 } from "../moderation";
 import type { EngagementRepository } from "./repository";
 import type {
@@ -30,12 +36,14 @@ export type EngagementServiceOptions = {
     windowSeconds: number;
     maxAttempts: number;
   };
+  scopedRateLimitStore?: RateLimitStore;
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const defaultCommentLimit = { windowSeconds: 10 * 60, maxAttempts: 5 };
 const defaultLikeLimit = { windowSeconds: 60, maxAttempts: 20 };
 const defaultEmailShareLimit = { windowSeconds: 60 * 60, maxAttempts: 3 };
+const honeypotTimingCheck = createHoneypotTimingCheck();
 const blockedPhrases = ["buy followers", "crypto giveaway", "free money", "casino bonus"];
 
 export class EngagementService {
@@ -43,6 +51,7 @@ export class EngagementService {
   private readonly commentRateLimit: Required<EngagementServiceOptions>["commentRateLimit"];
   private readonly likeRateLimit: Required<EngagementServiceOptions>["likeRateLimit"];
   private readonly emailShareRateLimit: Required<EngagementServiceOptions>["emailShareRateLimit"];
+  private readonly scopedRateLimitStore: RateLimitStore;
 
   constructor(
     private readonly repository: EngagementRepository,
@@ -52,6 +61,7 @@ export class EngagementService {
     this.commentRateLimit = options.commentRateLimit ?? defaultCommentLimit;
     this.likeRateLimit = options.likeRateLimit ?? defaultLikeLimit;
     this.emailShareRateLimit = options.emailShareRateLimit ?? defaultEmailShareLimit;
+    this.scopedRateLimitStore = options.scopedRateLimitStore ?? new InMemoryRateLimitStore();
   }
 
   async getSummary(postSlug: string, actor?: EngagementActor): Promise<EngagementSummary> {
@@ -91,11 +101,12 @@ export class EngagementService {
       };
     }
 
-    const actorHash = actorRateLimitKey(normalized.actor);
+    const moderationInput = commentModerationInput(normalized, this.now());
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "comment",
+      moderationInput,
       this.commentRateLimit,
-      (since) => this.repository.countRecentComments(actorHash, since),
+      (since) => this.repository.countRecentComments(actorRateLimitKey(normalized.actor), since),
     );
 
     if (rateLimit.limited) {
@@ -107,7 +118,7 @@ export class EngagementService {
       };
     }
 
-    const decisions = commentDecisions(normalized);
+    const decisions = commentDecisions(normalized, moderationInput);
     const moderationStatus = moderationStatusForDecisions(decisions);
     const now = this.now();
     const comment = await this.repository.storeComment({
@@ -158,11 +169,18 @@ export class EngagementService {
   }
 
   async likePost(input: LikePostInput): Promise<LikePostResult> {
-    const actorHash = actorRateLimitKey(input.actor);
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "like",
+      {
+        postSlug: input.postSlug,
+        body: "",
+        commenterName: "",
+        registeredUserId: registeredUserId(input.actor),
+        submittedAt: this.now(),
+        requestContext: input.requestContext,
+      },
       this.likeRateLimit,
-      (since) => this.repository.countRecentLikes(actorHash, since),
+      (since) => this.repository.countRecentLikes(actorRateLimitKey(input.actor), since),
     );
 
     if (rateLimit.limited) {
@@ -211,11 +229,12 @@ export class EngagementService {
       };
     }
 
-    const actorHash = actorRateLimitKey(normalized.actor);
+    const moderationInput = shareModerationInput(normalized, this.now());
     const rateLimit = await this.checkRateLimit(
-      actorHash,
+      "share_email",
+      moderationInput,
       this.emailShareRateLimit,
-      (since) => this.repository.countRecentShares(actorHash, since),
+      (since) => this.repository.countRecentShares(actorRateLimitKey(normalized.actor), since),
     );
 
     if (rateLimit.limited) {
@@ -227,7 +246,7 @@ export class EngagementService {
       };
     }
 
-    if (normalized.honeypot) {
+    if (shareTimingDecision(normalized, moderationInput)) {
       await this.repository.storeShare({
         postSlug: normalized.postSlug,
         channel: "email",
@@ -268,6 +287,7 @@ export class EngagementService {
     }
 
     const recipientEmailHash = hashIdentifier(normalized.recipientEmail);
+    const actorHash = actorRateLimitKey(normalized.actor);
 
     try {
       await normalized.emailProvider.sendTransactional({
@@ -303,10 +323,26 @@ export class EngagementService {
   }
 
   private async checkRateLimit(
-    actorHash: string | undefined,
+    action: string,
+    input: ModerationCheckInput,
     limit: { windowSeconds: number; maxAttempts: number },
     countRecent: (since: Date) => Promise<number>,
   ) {
+    const scopedDecision = createScopedRateLimitCheck({
+      action,
+      windowMs: limit.windowSeconds * 1000,
+      maxAttempts: limit.maxAttempts,
+      store: this.scopedRateLimitStore,
+    }).decide(input) as RateLimitDecision | undefined;
+
+    if (scopedDecision?.outcome === "block") {
+      return {
+        limited: true as const,
+        retryAfterSeconds: scopedDecision.retryAfterSeconds ?? limit.windowSeconds,
+      };
+    }
+
+    const actorHash = input.requestContext?.anonymousActorHash ?? input.registeredUserId;
     if (!actorHash) {
       return { limited: false as const };
     }
@@ -327,14 +363,21 @@ export class EngagementService {
 }
 
 function normalizeCommentInput(input: CommentSubmissionInput): CommentSubmissionInput {
+  const email = input.email.trim().toLowerCase();
+
   return {
     ...input,
     postSlug: input.postSlug.trim(),
     body: input.body.trim(),
     name: input.name.trim(),
-    email: input.email.trim().toLowerCase(),
+    email,
     website: input.website?.trim(),
     honeypot: input.honeypot?.trim(),
+    requestContext: {
+      ...input.requestContext,
+      honeypotFilled: Boolean(input.honeypot?.trim()),
+      emailHash: email ? hashIdentifier(email) : input.requestContext?.emailHash,
+    },
   };
 }
 
@@ -349,11 +392,19 @@ function validateComment(input: CommentSubmissionInput) {
   return errors;
 }
 
-function commentDecisions(input: CommentSubmissionInput): ModerationDecision[] {
+function commentDecisions(
+  input: CommentSubmissionInput,
+  moderationInput: ModerationCheckInput,
+): ModerationDecision[] {
   const decisions: ModerationDecision[] = [];
+  const timingDecision = honeypotTimingCheck.decide(moderationInput);
   const lowerBody = input.body.toLowerCase();
   const linkCount = (input.body.match(/https?:\/\//gi) ?? []).length;
   const signals: string[] = [];
+
+  if (timingDecision) {
+    decisions.push(timingDecision);
+  }
 
   if (input.honeypot) {
     signals.push("honeypot");
@@ -387,12 +438,19 @@ function commentDecisions(input: CommentSubmissionInput): ModerationDecision[] {
 }
 
 function normalizeShareInput(input: SharePostByEmailInput): SharePostByEmailInput {
+  const recipientEmail = input.recipientEmail.trim().toLowerCase();
+
   return {
     ...input,
     postSlug: input.postSlug.trim(),
-    recipientEmail: input.recipientEmail.trim().toLowerCase(),
+    recipientEmail,
     senderName: input.senderName?.trim(),
     honeypot: input.honeypot?.trim(),
+    requestContext: {
+      ...input.requestContext,
+      honeypotFilled: Boolean(input.honeypot?.trim()),
+      emailHash: recipientEmail ? hashIdentifier(recipientEmail) : input.requestContext?.emailHash,
+    },
   };
 }
 
@@ -410,6 +468,10 @@ function actorRateLimitKey(actor: EngagementActor) {
   return actor.kind === "registered_user" ? actor.userId : actor.anonymousActorHash;
 }
 
+function registeredUserId(actor: EngagementActor) {
+  return actor.kind === "registered_user" ? actor.userId : undefined;
+}
+
 function hashIdentifier(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -419,4 +481,42 @@ function shareRequestContext(input: SharePostByEmailInput) {
     ...input.requestContext,
     recipientEmailHash: hashIdentifier(input.recipientEmail),
   };
+}
+
+function commentModerationInput(
+  input: CommentSubmissionInput,
+  submittedAt: Date,
+): ModerationCheckInput {
+  return {
+    postSlug: input.postSlug,
+    body: input.body,
+    commenterName: input.name,
+    commenterEmail: input.email,
+    commenterWebsite: input.website,
+    registeredUserId: registeredUserId(input.actor),
+    submittedAt,
+    requestContext: input.requestContext,
+  };
+}
+
+function shareModerationInput(
+  input: SharePostByEmailInput,
+  submittedAt: Date,
+): ModerationCheckInput {
+  return {
+    postSlug: input.postSlug,
+    body: "",
+    commenterName: input.senderName ?? "",
+    commenterEmail: input.recipientEmail,
+    registeredUserId: registeredUserId(input.actor),
+    submittedAt,
+    requestContext: input.requestContext,
+  };
+}
+
+function shareTimingDecision(
+  input: SharePostByEmailInput,
+  moderationInput: ModerationCheckInput,
+) {
+  return Boolean(input.honeypot || honeypotTimingCheck.decide(moderationInput));
 }

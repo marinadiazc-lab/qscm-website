@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
 import type { PostSummary } from "@/src/content/posts";
 
 type PublicComment = {
@@ -40,9 +40,13 @@ export function PostEngagement({ post }: { post: PostSummary }) {
   const [commentMessage, setCommentMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const commentFormStartedAt = useRef(Date.now());
+  const shareFormStartedAt = useRef(Date.now());
 
   useEffect(() => {
     let active = true;
+    commentFormStartedAt.current = Date.now();
+    shareFormStartedAt.current = Date.now();
 
     fetch(`/api/posts/${post.slug}/engagement`)
       .then((response) => response.json())
@@ -93,6 +97,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
+    formData.set("formAgeMs", String(Date.now() - commentFormStartedAt.current));
 
     startTransition(async () => {
       const response = await fetch(`/api/posts/${post.slug}/engagement/comments`, {
@@ -106,6 +111,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
 
       if (response.ok && result.ok) {
         form.reset();
+        commentFormStartedAt.current = Date.now();
         if (result.status === "published") {
           refreshSummary();
         }
@@ -117,6 +123,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
+    formData.set("formAgeMs", String(Date.now() - shareFormStartedAt.current));
 
     startTransition(async () => {
       const response = await fetch(`/api/posts/${post.slug}/engagement/share-email`, {
@@ -130,6 +137,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
 
       if (response.ok && result.ok) {
         form.reset();
+        shareFormStartedAt.current = Date.now();
       }
     });
   }
@@ -163,6 +171,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
             required
           />
           <input className="hidden-field" name="company" tabIndex={-1} autoComplete="off" />
+          <input name="formAgeMs" type="hidden" value="0" readOnly />
           <button className="button" type="submit" disabled={isPending}>
             Send
           </button>
@@ -206,6 +215,7 @@ export function PostEngagement({ post }: { post: PostSummary }) {
           <input name="website" placeholder="Optional" type="url" />
         </label>
         <input className="hidden-field" name="company" tabIndex={-1} autoComplete="off" />
+        <input name="formAgeMs" type="hidden" value="0" readOnly />
         <label>
           Comment
           <textarea
