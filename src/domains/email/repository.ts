@@ -1,17 +1,147 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbClient } from "@/src/db";
-import { schema } from "@/src/db";
+import { db as defaultDb, schema } from "@/src/db";
 import type {
+  EmailProviderEventClaimResult,
+  EmailProviderEventRepository,
+} from "./events";
+import type {
+  CreateEmailBroadcastInput,
   CreateEmailSendIntentInput,
+  EmailBroadcast,
+  EmailBroadcastId,
+  EmailBroadcastStatus,
+  EmailBroadcastTarget,
   EmailDeliveryLog,
   EmailMetadata,
+  EmailProviderEvent,
+  EmailProviderKey,
   EmailSendIntent,
   EmailSendResult,
 } from "./types";
 import type { EmailSendIntentRepository } from "./send-intents";
+import type { EmailBroadcastRepository } from "./broadcasts";
 
-export class DrizzleEmailSendIntentRepository implements EmailSendIntentRepository {
+export class DrizzleEmailBroadcastRepository implements EmailBroadcastRepository {
   constructor(private readonly db: DbClient) {}
+
+  async createOrGet(
+    input: CreateEmailBroadcastInput & { provider: EmailProviderKey },
+  ): Promise<EmailBroadcast> {
+    const inserted = await this.db
+      .insert(schema.emailBroadcasts)
+      .values({
+        publicationId: input.publicationId,
+        provider: input.provider,
+        key: input.key,
+        status: input.scheduledAt ? "scheduled" : "draft",
+        subject: input.content.subject,
+        previewText: input.content.previewText,
+        html: input.content.html,
+        text: input.content.text,
+        target: input.target as Record<string, unknown>,
+        metadata: input.metadata ?? {},
+        scheduledAt: input.scheduledAt,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted[0]) {
+      return toBroadcast(inserted[0]);
+    }
+
+    if (!input.key) {
+      throw new Error("Email broadcast insert conflicted but no unique key was provided.");
+    }
+
+    const existing = await this.db.query.emailBroadcasts.findFirst({
+      where: and(
+        eq(schema.emailBroadcasts.publicationId, input.publicationId),
+        eq(schema.emailBroadcasts.key, input.key),
+      ),
+    });
+
+    if (!existing) {
+      throw new Error("Email broadcast insert conflicted but no existing broadcast was found.");
+    }
+
+    return toBroadcast(existing);
+  }
+
+  async findById(id: EmailBroadcastId) {
+    const row = await this.db.query.emailBroadcasts.findFirst({
+      where: eq(schema.emailBroadcasts.id, id),
+    });
+
+    return row ? toBroadcast(row) : undefined;
+  }
+
+  async markProviderCreated(id: EmailBroadcastId, broadcast: EmailBroadcast) {
+    const existing = await this.requireBroadcast(id);
+    const updated = await this.db
+      .update(schema.emailBroadcasts)
+      .set({
+        status: broadcast.status,
+        providerBroadcastId: broadcast.providerBroadcastId ?? existing.providerBroadcastId,
+        scheduledAt: broadcast.scheduledAt ?? existing.scheduledAt,
+        sentAt: broadcast.sentAt ?? existing.sentAt,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          ...(broadcast.metadata ?? {}),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.emailBroadcasts.id, id))
+      .returning();
+
+    return toBroadcast(updated[0] ?? (await this.requireBroadcast(id)));
+  }
+
+  async markSendResult(id: EmailBroadcastId, result: EmailSendResult) {
+    const existing = await this.requireBroadcast(id);
+    const updated = await this.db
+      .update(schema.emailBroadcasts)
+      .set({
+        status: result.status === "sent" ? "sent" : existing.status,
+        providerBroadcastId: result.providerBroadcastId ?? existing.providerBroadcastId,
+        sentAt: result.sentAt ?? existing.sentAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.emailBroadcasts.id, id))
+      .returning();
+
+    return toBroadcast(updated[0] ?? (await this.requireBroadcast(id)));
+  }
+
+  async listBroadcasts(filter: { publicationId?: string; status?: EmailBroadcastStatus } = {}) {
+    const rows = await this.db.query.emailBroadcasts.findMany({
+      where: and(
+        filter.publicationId
+          ? eq(schema.emailBroadcasts.publicationId, filter.publicationId)
+          : undefined,
+        filter.status ? eq(schema.emailBroadcasts.status, filter.status) : undefined,
+      ),
+      orderBy: desc(schema.emailBroadcasts.createdAt),
+    });
+
+    return rows.map(toBroadcast);
+  }
+
+  private async requireBroadcast(id: EmailBroadcastId) {
+    const existing = await this.findById(id);
+
+    if (!existing) {
+      throw new Error(`Email broadcast ${id} was not found.`);
+    }
+
+    return existing;
+  }
+}
+
+export class DrizzleEmailSendIntentRepository
+  implements EmailSendIntentRepository, EmailProviderEventRepository
+{
+  constructor(private readonly db: DbClient = defaultDb) {}
 
   async createOrGet(input: CreateEmailSendIntentInput): Promise<EmailSendIntent> {
     const inserted = await this.db
@@ -191,6 +321,88 @@ export class DrizzleEmailSendIntentRepository implements EmailSendIntentReposito
     return rows.map(toLog);
   }
 
+  async findBroadcastIdByProviderBroadcastId(provider: string, providerBroadcastId: string) {
+    const [broadcast] = await this.db
+      .select({ id: schema.emailBroadcasts.id })
+      .from(schema.emailBroadcasts)
+      .where(
+        and(
+          eq(schema.emailBroadcasts.provider, provider),
+          eq(schema.emailBroadcasts.providerBroadcastId, providerBroadcastId),
+        ),
+      )
+      .limit(1);
+
+    return broadcast?.id;
+  }
+
+  async claimProviderEvent(
+    event: EmailProviderEvent,
+    input: {
+      payloadHash?: string;
+      payload: Record<string, unknown>;
+    },
+  ): Promise<EmailProviderEventClaimResult> {
+    const [claimed] = await this.db
+      .insert(schema.webhookEventLogs)
+      .values({
+        provider: event.provider,
+        providerEventId: event.id,
+        eventType: event.type,
+        state: "processing",
+        payloadHash: input.payloadHash,
+        payload: input.payload,
+        attemptCount: 1,
+      })
+      .onConflictDoUpdate({
+        target: [schema.webhookEventLogs.provider, schema.webhookEventLogs.providerEventId],
+        set: {
+          state: "processing",
+          payloadHash: input.payloadHash,
+          payload: input.payload,
+          attemptCount: sql`${schema.webhookEventLogs.attemptCount} + 1`,
+          lastError: null,
+        },
+        setWhere: sql`${schema.webhookEventLogs.state} in ('received', 'failed')`,
+      })
+      .returning();
+
+    if (claimed) {
+      await this.persistProviderEvent(event);
+      return { state: "claimed" };
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(schema.webhookEventLogs)
+      .where(
+        and(
+          eq(schema.webhookEventLogs.provider, event.provider),
+          eq(schema.webhookEventLogs.providerEventId, event.id),
+        ),
+      )
+      .limit(1);
+
+    if (existing?.state === "processed" || existing?.state === "ignored") {
+      return { state: existing.state };
+    }
+
+    return { state: "processing_duplicate" };
+  }
+
+  async markProviderEventProcessed(event: EmailProviderEvent) {
+    const processedAt = new Date();
+    await this.db
+      .update(schema.emailProviderEvents)
+      .set({ processedAt })
+      .where(eq(schema.emailProviderEvents.id, event.id));
+    await this.markWebhookLog(event, "processed");
+  }
+
+  async markProviderEventFailed(event: EmailProviderEvent, errorMessage: string) {
+    await this.markWebhookLog(event, "failed", errorMessage);
+  }
+
   private async requireIntent(intentId: string) {
     const existing = await this.db.query.emailSendIntents.findFirst({
       where: eq(schema.emailSendIntents.id, intentId),
@@ -202,6 +414,65 @@ export class DrizzleEmailSendIntentRepository implements EmailSendIntentReposito
 
     return toIntent(existing);
   }
+
+  private async persistProviderEvent(event: EmailProviderEvent) {
+    await this.db
+      .insert(schema.emailProviderEvents)
+      .values({
+        id: event.id,
+        provider: event.provider,
+        eventType: event.type,
+        providerMessageId: event.providerMessageId,
+        recipientEmail: event.recipientEmail,
+        payload: event.payload,
+        receivedAt: event.createdAt,
+      })
+      .onConflictDoNothing();
+  }
+
+  private async markWebhookLog(
+    event: EmailProviderEvent,
+    state: "processed" | "ignored" | "failed",
+    lastError?: string,
+  ) {
+    await this.db
+      .update(schema.webhookEventLogs)
+      .set({
+        state,
+        lastError,
+        processedAt: state === "processed" || state === "ignored" ? new Date() : undefined,
+      })
+      .where(
+        and(
+          eq(schema.webhookEventLogs.provider, event.provider),
+          eq(schema.webhookEventLogs.providerEventId, event.id),
+          eq(schema.webhookEventLogs.state, "processing"),
+        ),
+      );
+  }
+}
+
+function toBroadcast(row: typeof schema.emailBroadcasts.$inferSelect): EmailBroadcast {
+  return {
+    id: row.id,
+    provider: row.provider,
+    publicationId: row.publicationId,
+    key: row.key ?? undefined,
+    status: row.status,
+    content: {
+      subject: row.subject,
+      previewText: row.previewText ?? undefined,
+      html: row.html ?? undefined,
+      text: row.text ?? undefined,
+    },
+    target: row.target as EmailBroadcastTarget,
+    providerBroadcastId: row.providerBroadcastId ?? undefined,
+    scheduledAt: row.scheduledAt ?? undefined,
+    sentAt: row.sentAt ?? undefined,
+    metadata: row.metadata as EmailMetadata,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 function toIntent(row: typeof schema.emailSendIntents.$inferSelect): EmailSendIntent {

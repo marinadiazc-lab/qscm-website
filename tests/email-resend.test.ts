@@ -1,15 +1,23 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildMagicLinkEmail,
   buildReceiptEmail,
   buildSubscriptionUpdateEmail,
+  EmailBroadcastService,
   createNewsletterBroadcastFromPost,
   createResendEmailProviderFromEnv,
+  EmailProviderWebhookHandler,
   EmailProviderEventProcessor,
   EmailSendService,
+  InMemoryEmailBroadcastRepository,
+  InMemoryEmailProvider,
   InMemoryEmailSendIntentRepository,
   parseResendWebhookEvent,
   ResendEmailProvider,
+  verifyResendWebhookSignature,
+  type EmailProviderEvent,
+  type EmailProviderEventRepository,
   type EmailSendIntentReference,
 } from "../src/domains/email";
 import type { PostSummary } from "../src/content/posts";
@@ -274,6 +282,20 @@ describe("Resend provider", () => {
       provider.createBroadcast({
         publicationId: "pub_1",
         content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { segmentIds: ["segment_1", "segment_2"] },
+      }),
+    ).rejects.toThrow(/exactly one segment target/);
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
+        target: { audienceIds: ["audience_1"] },
+      }),
+    ).rejects.toThrow(/exactly one segment target/);
+    await expect(
+      provider.createBroadcast({
+        publicationId: "pub_1",
+        content: { subject: "Newsletter", html: "<p>Hello</p>", text: "Hello" },
         target: { segmentIds: ["segment_1"] },
         scheduledAt: new Date("2026-07-11T12:00:00.000Z"),
       }),
@@ -443,8 +465,7 @@ describe("email send service", () => {
 });
 
 describe("newsletter broadcasts", () => {
-  it("creates an email-ready broadcast from post newsletter metadata", () => {
-    const post: PostSummary = {
+  const post = (overrides: Partial<PostSummary> = {}): PostSummary => ({
       slug: "welcome",
       title: "Welcome",
       excerpt: "The first note.",
@@ -470,26 +491,177 @@ describe("newsletter broadcasts", () => {
         enabled: true,
         subject: "A note for subscribers",
       },
-    };
+      ...overrides,
+  });
 
-    const broadcast = createNewsletterBroadcastFromPost(post, {
+  it("creates an email-ready broadcast from post newsletter metadata", () => {
+    const broadcast = createNewsletterBroadcastFromPost(post(), {
       siteName: "QSCM",
       siteUrl: "https://qscm.example",
       defaultPublicationId: "pub_1",
-      audienceIds: {
-        public: "aud_public",
-        free_subscribers: "aud_free",
-        paid_any: "aud_paid",
+      broadcastSegmentIds: {
+        public: "seg_public",
+        free_subscribers: "seg_free_access",
+        paid_any: "seg_paid",
       },
     });
 
     expect(broadcast).toMatchObject({
       publicationId: "pub_1",
       key: "post:welcome",
-      target: { audienceIds: ["aud_free"] },
+      target: { segmentIds: ["seg_free_access"] },
       content: { subject: "A note for subscribers" },
     });
     expect(broadcast?.content.html).toContain("RESEND_UNSUBSCRIBE_URL");
+  });
+
+  it("blocks newsletter audience metadata from widening post access", () => {
+    expect(() =>
+      createNewsletterBroadcastFromPost(
+        post({
+          visibility: "paid_any",
+          accessRequirement: {
+            visibility: "paid_any",
+            rule: "paid_subscription",
+            requiresAuthentication: true,
+            requiresPaidSubscription: true,
+            allowedTierIds: [],
+          },
+          newsletter: {
+            enabled: true,
+            audience: "public",
+          },
+        }),
+        {
+          siteName: "QSCM",
+          siteUrl: "https://qscm.example",
+          defaultPublicationId: "pub_1",
+        },
+      ),
+    ).toThrow(/broader than post visibility/);
+  });
+
+  it("maps tier-restricted posts to tier segment targets", () => {
+    const broadcast = createNewsletterBroadcastFromPost(
+      post({
+        visibility: "specific_tiers",
+        accessRequirement: {
+          visibility: "specific_tiers",
+          rule: "specific_tiers",
+          requiresAuthentication: true,
+          requiresPaidSubscription: true,
+          allowedTierIds: ["founding"],
+        },
+        tierIds: ["founding"],
+      }),
+      {
+        siteName: "QSCM",
+        siteUrl: "https://qscm.example",
+        defaultPublicationId: "pub_1",
+      },
+    );
+
+    expect(broadcast?.target).toEqual({ segmentIds: ["tier:founding"] });
+  });
+
+  it("maps multi-tier posts to one combined tier segment target", () => {
+    const broadcast = createNewsletterBroadcastFromPost(
+      post({
+        visibility: "specific_tiers",
+        accessRequirement: {
+          visibility: "specific_tiers",
+          rule: "specific_tiers",
+          requiresAuthentication: true,
+          requiresPaidSubscription: true,
+          allowedTierIds: ["founding", "patron"],
+        },
+        tierIds: ["patron", "founding"],
+      }),
+      {
+        siteName: "QSCM",
+        siteUrl: "https://qscm.example",
+        defaultPublicationId: "pub_1",
+        tierSegmentIds: {
+          "founding+patron": "seg_founders_and_patrons",
+        },
+      },
+    );
+
+    expect(broadcast?.target).toEqual({ segmentIds: ["seg_founders_and_patrons"] });
+  });
+
+  it("persists local broadcast and send records around provider calls", async () => {
+    const broadcastRepository = new InMemoryEmailBroadcastRepository(() => now);
+    const sendIntentRepository = new InMemoryEmailSendIntentRepository(() => now);
+    const provider = new InMemoryEmailProvider({ now: () => now });
+    const sendService = new EmailSendService(sendIntentRepository, provider);
+    const broadcastService = new EmailBroadcastService(
+      broadcastRepository,
+      provider,
+      sendService,
+    );
+
+    const draft = await broadcastService.createDraftFromPost(post(), {
+      siteName: "QSCM",
+      siteUrl: "https://qscm.example",
+      defaultPublicationId: "pub_1",
+      broadcastSegmentIds: {
+        public: "seg_public",
+        free_subscribers: "seg_free_access",
+        paid_any: "seg_paid",
+      },
+    });
+
+    expect(draft).toMatchObject({
+      publicationId: "pub_1",
+      provider: "in_memory",
+      status: "draft",
+      providerBroadcastId: expect.any(String),
+    });
+
+    const result = await broadcastService.sendBroadcast({
+      publicationId: "pub_1",
+      broadcastId: draft!.id,
+      dedupeKey: "broadcast:welcome:send",
+    });
+
+    expect(result).toMatchObject({
+      accepted: true,
+      broadcastId: draft!.id,
+      dedupeKey: `broadcast:${draft!.id}:send`,
+      status: "sent",
+    });
+
+    const duplicate = await broadcastService.sendBroadcast({
+      publicationId: "other_pub",
+      broadcastId: draft!.id,
+      dedupeKey: "broadcast:welcome:manual-retry",
+    });
+
+    expect(duplicate).toMatchObject({
+      accepted: false,
+      broadcastId: draft!.id,
+      dedupeKey: `broadcast:${draft!.id}:send`,
+      status: "skipped_duplicate",
+    });
+    expect(provider.listSentResults()).toHaveLength(1);
+    expect(await broadcastRepository.listBroadcasts({ publicationId: "pub_1" })).toMatchObject([
+      {
+        id: draft!.id,
+        status: "sent",
+        providerBroadcastId: expect.any(String),
+      },
+    ]);
+    const intents = await sendIntentRepository.listIntents({ broadcastId: draft!.id });
+    expect(intents).toMatchObject([
+      {
+        dedupeKey: `broadcast:${draft!.id}:send`,
+        kind: "broadcast",
+        status: "sent",
+        providerBroadcastId: expect.any(String),
+      },
+    ]);
+    expect(intents).toHaveLength(1);
   });
 });
 
@@ -559,4 +731,185 @@ describe("provider events", () => {
       reason: "contact.updated",
     });
   });
+
+  it("persists provider events before processing and skips durable duplicates", async () => {
+    const repository = new InMemoryProviderEventRepository();
+    const updateSubscriberStatus = vi.fn();
+    const logDelivery = vi.fn((log) => ({ id: "log_1", createdAt: now, ...log }));
+    const handler = new EmailProviderWebhookHandler({
+      repository,
+      processor: new EmailProviderEventProcessor({
+        updateSubscriberStatus,
+        logDelivery,
+      }),
+    });
+    const event = parseResendWebhookEvent({
+      id: "evt_unsubscribe",
+      type: "contact.updated",
+      created_at: now.toISOString(),
+      data: {
+        email: "reader@example.com",
+        unsubscribed: true,
+      },
+    });
+
+    const first = await handler.handle(event);
+    const duplicate = await handler.handle(event);
+
+    expect(first).toEqual({ processed: true, reason: "processed" });
+    expect(duplicate).toEqual({ processed: false, reason: "processed" });
+    expect(repository.events.get("evt_unsubscribe")?.processedAt).toBeInstanceOf(Date);
+    expect(repository.events.get("evt_unsubscribe")?.payload).toEqual(event.payload);
+    expect(updateSubscriberStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("records failed deliveries as error logs with provider event metadata", async () => {
+    const logDelivery = vi.fn((log) => ({ id: "log_1", createdAt: now, ...log }));
+    const resolveBroadcastId = vi.fn(async () => "local_broadcast_1");
+    const processor = new EmailProviderEventProcessor({ logDelivery, resolveBroadcastId });
+    const event = parseResendWebhookEvent({
+      id: "evt_failed",
+      type: "email.failed",
+      created_at: now.toISOString(),
+      data: {
+        email: {
+          id: "email_failed",
+          to: ["reader@example.com"],
+          broadcast_id: "provider_broadcast_1",
+          tags: [
+            { name: "subscriberId", value: "sub_1" },
+          ],
+        },
+      },
+    });
+
+    await processor.process(event);
+
+    expect(event).toMatchObject({
+      subscriberId: "sub_1",
+      providerBroadcastId: "provider_broadcast_1",
+    });
+    expect(event.broadcastId).toBeUndefined();
+    expect(resolveBroadcastId).toHaveBeenCalledWith({
+      provider: "resend",
+      providerBroadcastId: "provider_broadcast_1",
+    });
+    expect(logDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerMessageId: "email_failed",
+        subscriberId: "sub_1",
+        broadcastId: "local_broadcast_1",
+        recipientEmail: "reader@example.com",
+        eventType: "email.failed",
+        level: "error",
+        metadata: {
+          providerEventId: "evt_failed",
+          providerBroadcastId: "provider_broadcast_1",
+        },
+      }),
+    );
+  });
+
+  it("uses Svix delivery ids and documented object tags for Resend webhook correlation", () => {
+    const event = parseResendWebhookEvent(
+      {
+        type: "email.delivered",
+        created_at: now.toISOString(),
+        data: {
+          email_id: "email_delivered",
+          to: ["reader@example.com"],
+          broadcast_id: "broadcast_from_data",
+          tags: {
+            subscriberId: "sub_1",
+          },
+        },
+      },
+      { eventId: "msg_svix_1" },
+    );
+
+    expect(event).toMatchObject({
+      id: "msg_svix_1",
+      providerMessageId: "email_delivered",
+      recipientEmail: "reader@example.com",
+      subscriberId: "sub_1",
+      providerBroadcastId: "broadcast_from_data",
+    });
+    expect(event.broadcastId).toBeUndefined();
+  });
+
+  it("verifies Resend webhook signatures using raw-body Svix semantics", () => {
+    const rawBody = JSON.stringify({ id: "evt_1", type: "email.delivered" });
+    const secret = "whsec_" + Buffer.from("test_secret").toString("base64");
+    const headers = signedSvixHeaders({
+      rawBody,
+      secret,
+      id: "msg_1",
+      timestamp: "1783771200",
+    });
+
+    expect(() =>
+      verifyResendWebhookSignature(rawBody, headers, secret, {
+        now: () => new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      verifyResendWebhookSignature(`${rawBody}\n`, headers, secret, {
+        now: () => new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    ).toThrow(/Invalid Resend webhook signature/);
+  });
 });
+
+class InMemoryProviderEventRepository implements EmailProviderEventRepository {
+  readonly events = new Map<
+    string,
+    { event: EmailProviderEvent; payload: Record<string, unknown>; processedAt?: Date }
+  >();
+  private readonly states = new Map<string, "processing" | "processed" | "failed">();
+
+  async claimProviderEvent(event: EmailProviderEvent) {
+    const state = this.states.get(event.id);
+    if (state === "processed") {
+      return { state: "processed" as const };
+    }
+    if (state === "processing") {
+      return { state: "processing_duplicate" as const };
+    }
+
+    this.states.set(event.id, "processing");
+    this.events.set(event.id, { event, payload: event.payload });
+    return { state: "claimed" as const };
+  }
+
+  async markProviderEventProcessed(event: EmailProviderEvent) {
+    const existing = this.events.get(event.id);
+    if (existing) {
+      existing.processedAt = now;
+    }
+    this.states.set(event.id, "processed");
+  }
+
+  async markProviderEventFailed(event: EmailProviderEvent) {
+    this.states.set(event.id, "failed");
+  }
+}
+
+function signedSvixHeaders(input: {
+  rawBody: string;
+  secret: string;
+  id: string;
+  timestamp: string;
+}) {
+  const secret = input.secret.startsWith("whsec_")
+    ? input.secret.slice("whsec_".length)
+    : input.secret;
+  const signature = createHmac("sha256", Buffer.from(secret, "base64"))
+    .update(`${input.id}.${input.timestamp}.${input.rawBody}`)
+    .digest("base64");
+
+  return {
+    "svix-id": input.id,
+    "svix-timestamp": input.timestamp,
+    "svix-signature": `v1,${signature}`,
+  };
+}

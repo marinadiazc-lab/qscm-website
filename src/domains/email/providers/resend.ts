@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { EmailProviderConfigurationError, EmailProviderError } from "../errors";
 import type {
@@ -56,6 +57,19 @@ export type ResendEmailProviderOptions = {
   client?: ResendClient;
   now?: () => Date;
 };
+
+export type ResendWebhookHeaders = {
+  "svix-id"?: string;
+  "svix-timestamp"?: string;
+  "svix-signature"?: string;
+};
+
+export class ResendWebhookVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResendWebhookVerificationError";
+  }
+}
 
 export class ResendEmailProvider implements EmailProvider {
   readonly key: EmailProviderKey = "resend";
@@ -286,11 +300,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const segmentId = input.target.segmentIds?.[0] ?? input.target.audienceIds?.[0];
-
-    if (!segmentId) {
-      throw new EmailProviderError("Resend broadcasts require a segment or audience target.", this.key);
-    }
+    const segmentId = singleBroadcastTargetId(input.target);
 
     if (!this.client.broadcasts?.create) {
       throw new EmailProviderError(
@@ -349,7 +359,8 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const response = await this.client.broadcasts.send(input.broadcastId);
+    const providerBroadcastId = input.providerBroadcastId ?? input.broadcastId;
+    const response = await this.client.broadcasts.send(providerBroadcastId);
 
     if (response?.error) {
       throw resendError("send broadcast", response.error);
@@ -362,7 +373,7 @@ export class ResendEmailProvider implements EmailProvider {
       status: "sent",
       accepted: true,
       broadcastId: input.broadcastId,
-      providerBroadcastId: response?.data?.id ?? input.broadcastId,
+      providerBroadcastId: response?.data?.id ?? providerBroadcastId,
       sentAt: this.now(),
     };
   }
@@ -391,6 +402,45 @@ export function createResendEmailProviderFromEnv(
     },
     options,
   );
+}
+
+export function verifyResendWebhookSignature(
+  rawBody: string,
+  headers: ResendWebhookHeaders,
+  webhookSecret: string | undefined,
+  options: { now?: () => Date; toleranceSeconds?: number } = {},
+) {
+  if (!webhookSecret) {
+    throw new ResendWebhookVerificationError("RESEND_WEBHOOK_SECRET is required for email webhooks.");
+  }
+
+  const svixId = headers["svix-id"];
+  const svixTimestamp = headers["svix-timestamp"];
+  const svixSignature = headers["svix-signature"];
+
+  if (!svixId || !svixTimestamp || !svixSignature) {
+    throw new ResendWebhookVerificationError("Missing Resend webhook Svix headers.");
+  }
+
+  const timestamp = Number(svixTimestamp);
+  if (!Number.isFinite(timestamp)) {
+    throw new ResendWebhookVerificationError("Invalid Resend webhook timestamp.");
+  }
+
+  const nowSeconds = Math.floor((options.now?.() ?? new Date()).getTime() / 1000);
+  const toleranceSeconds = options.toleranceSeconds ?? 300;
+  if (Math.abs(nowSeconds - timestamp) > toleranceSeconds) {
+    throw new ResendWebhookVerificationError("Resend webhook signature timestamp is outside tolerance.");
+  }
+
+  const secret = webhookSecret.startsWith("whsec_") ? webhookSecret.slice("whsec_".length) : webhookSecret;
+  const signingSecret = Buffer.from(secret, "base64");
+  const signedPayload = `${svixId}.${svixTimestamp}.${rawBody}`;
+  const expectedSignature = createHmac("sha256", signingSecret).update(signedPayload).digest("base64");
+
+  if (!hasMatchingSvixSignature(svixSignature, expectedSignature)) {
+    throw new ResendWebhookVerificationError("Invalid Resend webhook signature.");
+  }
 }
 
 function requiredConfigMissingFields(config: ResendEmailProviderConfig) {
@@ -435,6 +485,24 @@ function parseAddressEnv(value: string | undefined): EmailAddressWithName {
   return { email: value.trim() };
 }
 
+function singleBroadcastTargetId(target: CreateEmailBroadcastInput["target"]) {
+  const segmentIds = target.segmentIds ?? [];
+  const unsupportedDirectTargets = [
+    ...(target.audienceIds ?? []),
+    ...(target.subscriberIds ?? []),
+    ...(target.excludeSubscriberIds ?? []),
+  ];
+
+  if (segmentIds.length !== 1 || unsupportedDirectTargets.length > 0) {
+    throw new EmailProviderError(
+      "Resend broadcasts require exactly one segment target. Configure a broadcast segment that matches the intended audience.",
+      "resend",
+    );
+  }
+
+  return segmentIds[0]!;
+}
+
 function toResendTags(tags: string[] | undefined, metadata: Record<string, unknown> | undefined) {
   const tagEntries = [
     ...(tags ?? []).map((tag) => [tag, "true"] as const),
@@ -460,6 +528,23 @@ function isProviderSuppressedStatus(status: string | undefined) {
 
 function sanitizeTag(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 256);
+}
+
+function hasMatchingSvixSignature(signatureHeader: string, expectedSignature: string) {
+  const expected = Buffer.from(expectedSignature);
+  return signatureHeader
+    .split(" ")
+    .map((signature) => signature.trim())
+    .filter(Boolean)
+    .some((signature) => {
+      const [, value] = signature.split(",", 2);
+      if (!value) {
+        return false;
+      }
+
+      const candidate = Buffer.from(value);
+      return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+    });
 }
 
 function resendError(operation: string, error: unknown) {

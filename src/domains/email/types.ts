@@ -329,12 +329,14 @@ export type EmailProviderEvent = {
   providerMessageId?: EmailProviderMessageId;
   recipientEmail?: EmailAddress;
   broadcastId?: EmailBroadcastId;
+  providerBroadcastId?: string;
   subscriberId?: EmailSubscriberId;
   payload: Record<string, unknown>;
 };
 
 export type SendEmailBroadcastInput = {
   broadcastId: EmailBroadcastId;
+  providerBroadcastId?: string;
   intent: EmailSendIntentReference;
   scheduledAt?: Date;
   metadata?: EmailMetadata;

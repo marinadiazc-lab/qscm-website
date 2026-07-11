@@ -30,6 +30,8 @@ Required production environment:
 - `RESEND_FREE_SUBSCRIBER_AUDIENCE_ID`,
   `RESEND_PAID_SUBSCRIBER_AUDIENCE_ID`, and
   `RESEND_SUPPRESSED_SUBSCRIBER_AUDIENCE_ID` for subscriber contact sync
+- Resend broadcast segment ids for each newsletter audience, including a free
+  access segment that contains both free and paid subscribers
 - `RESEND_WEBHOOK_SECRET` for webhook verification at the route layer
 
 `createResendEmailProviderFromEnv` refuses to create a live SDK client when
@@ -91,27 +93,55 @@ changing post visibility behavior.
 `createNewsletterBroadcastFromPost` converts a published post into a
 `CreateEmailBroadcastInput`. Audience targeting starts from post visibility:
 `public`, `free_subscribers`, `paid_any`, or `specific_tiers`. Tier-specific
-posts map tier ids to configured segment ids.
+posts map to one configured segment per exact tier set, falling back to stable
+`tier:<tierId>` or `tiers:<tierId+otherTierId>` segment keys when provider ids are not configured. Free
+subscriber posts target one configured broadcast segment that must include both
+free and paid subscribers, matching the server access rule that paid
+subscribers can read free subscriber content. The Resend adapter rejects
+multi-target draft creation instead of silently sending only the first segment.
 
-The Resend adapter currently creates draft broadcasts only. Scheduled broadcast
-orchestration remains in #50 so the implementation can match the provider
-contract end to end instead of passing incomplete scheduling fields.
+`EmailBroadcastService` owns the app pipeline: it creates or reuses the local
+`email_broadcasts` row, creates the provider draft, stores the provider
+broadcast id on the local row, and sends through `EmailSendService` so a durable
+`email_send_intents` row records the send attempt. Local broadcast ids remain
+the app source of truth; provider ids are stored as external references for
+Resend operations.
+
+The Resend adapter currently creates draft broadcasts and sends existing
+provider drafts immediately. Scheduled broadcast orchestration remains a future
+workflow so the implementation can match the provider contract end to end
+instead of passing incomplete scheduling fields.
 
 ## Provider Events
 
 Resend webhooks should be verified with the raw request body and the Svix
 headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
-`EmailProviderEventProcessor` dedupes provider event ids only for the lifetime
-of the process. Durable webhook idempotency must persist `email_provider_events`
-before #52 can close. The in-process processor maps:
+`app/api/email/webhook/route.ts` reads the raw body, verifies the Resend/Svix
+signature with `RESEND_WEBHOOK_SECRET`, stores a durable webhook claim, persists
+the `email_provider_events` payload, and only then processes the event.
+
+Durable idempotency uses `webhook_event_logs` keyed by `(provider,
+provider_event_id)`. Duplicate deliveries that already reached `processed` or
+`ignored` return without mutating subscribers or delivery logs. Failed attempts
+are left retryable and record `last_error`.
+
+The processor maps:
 
 - `contact.updated` with `data.unsubscribed: true` to local `unsubscribed`
 - `email.bounced` to local `bounced`
 - `email.complained` to local `complained`
 - `email.suppressed` to local `suppressed`
 
-Delivery events are recorded through the delivery-log foundation for later M12
-admin dashboards.
+Delivery failures such as `email.failed`, `email.bounced`, and
+`email.complained` are recorded as error-level delivery logs with the provider
+event id in metadata. Resend tags or metadata named `subscriberId` /
+`subscriber_id` and `broadcastId` / `broadcast_id` are attached to the local
+event so delivery logs can link back to subscriber and broadcast rows.
+
+If a provider event omits `subscriberId`, the webhook route resolves the
+recipient email against the default publication before updating local subscriber
+status. Unknown recipients are ignored for status updates while still retaining
+the provider event and delivery log.
 
 ## Post Sharing By Email
 
