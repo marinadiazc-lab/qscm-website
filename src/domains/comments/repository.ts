@@ -1,5 +1,10 @@
 import type { CommentId, CommentRecord } from "./types";
-import type { ModerationStatus } from "../moderation";
+import type {
+  ManualModerationDecision,
+  ModerationDecisionOutcome,
+  ModerationStatus,
+  SystemModerationDecision,
+} from "../moderation";
 
 export interface ListCommentsOptions {
   status?: ModerationStatus;
@@ -14,7 +19,13 @@ export interface CommentRepository {
     id: CommentId,
     status: ModerationStatus,
     reviewedAt: Date,
+    reviewer?: ModerationReviewer,
   ): CommentRecord | undefined;
+}
+
+export interface ModerationReviewer {
+  moderatorId?: string;
+  reason?: string;
 }
 
 export class InMemoryCommentRepository implements CommentRepository {
@@ -62,6 +73,7 @@ export class InMemoryCommentRepository implements CommentRepository {
     id: CommentId,
     status: ModerationStatus,
     reviewedAt: Date,
+    reviewer: ModerationReviewer = {},
   ): CommentRecord | undefined {
     const comment = this.comments.get(id);
 
@@ -72,6 +84,13 @@ export class InMemoryCommentRepository implements CommentRepository {
     const updated: CommentRecord = {
       ...comment,
       moderationStatus: status,
+      moderationAudit: [
+        ...comment.moderationAudit,
+        {
+          checkedAt: reviewedAt,
+          decision: moderationTransitionDecision(status, reviewer),
+        },
+      ],
       updatedAt: reviewedAt,
       publishedAt: status === "approved" ? comment.publishedAt ?? reviewedAt : undefined,
     };
@@ -83,6 +102,50 @@ export class InMemoryCommentRepository implements CommentRepository {
   clear() {
     this.comments.clear();
   }
+}
+
+function moderationTransitionDecision(
+  status: ModerationStatus,
+  reviewer: ModerationReviewer,
+): ManualModerationDecision | SystemModerationDecision {
+  const outcome = moderationOutcomeForStatus(status);
+  const reason =
+    reviewer.reason ?? `Comment moderation status changed to ${status}.`;
+
+  if (reviewer.moderatorId) {
+    return {
+      source: "manual",
+      outcome,
+      reason,
+      moderatorId: reviewer.moderatorId,
+      metadata: {
+        status,
+      },
+    };
+  }
+
+  return {
+    source: "system",
+    outcome,
+    reason,
+    metadata: {
+      status,
+    },
+  };
+}
+
+function moderationOutcomeForStatus(
+  status: ModerationStatus,
+): ModerationDecisionOutcome {
+  if (status === "approved") {
+    return "allow";
+  }
+
+  if (status === "suspicious") {
+    return "suspicious";
+  }
+
+  return "block";
 }
 
 function cloneComment(comment: CommentRecord): CommentRecord {

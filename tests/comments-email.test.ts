@@ -7,6 +7,11 @@ import {
   toPublicImmediateComment,
   type CommentRecord,
 } from "../src/domains/comments";
+import {
+  createHoneypotTimingCheck,
+  createScopedRateLimitCheck,
+  InMemoryRateLimitStore,
+} from "../src/domains/moderation";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
 
@@ -120,6 +125,114 @@ describe("comments", () => {
 
     expect(result.comment.moderationStatus).toBe("blocked");
     expect(result.publicComment).toBeUndefined();
+  });
+
+  it("stores honeypot state as a boolean signal without raw payloads", () => {
+    const result = buildComment(
+      {
+        postSlug: "welcome",
+        body: "Blocked body",
+        commenter: { kind: "anonymous", name: "Spammer", email: "spam@example.com" },
+        requestContext: {
+          honeypotFilled: true,
+          formAgeMs: Number.NaN,
+          honeypotValue: "spam payload",
+        } as { honeypotFilled: true; formAgeMs: number },
+      },
+      {
+        id: "comment_honeypot",
+        now,
+        checks: [createHoneypotTimingCheck()],
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.comment.moderationStatus).toBe("blocked");
+    expect(result.comment.requestContext).toEqual({ honeypotFilled: true });
+    expect(JSON.stringify(result.comment)).not.toContain("spam payload");
+  });
+
+  it("treats invalid form ages as suspicious instead of bypassing timing checks", () => {
+    const result = buildComment(
+      {
+        postSlug: "welcome",
+        body: "Looks normal",
+        commenter: { kind: "anonymous", name: "Reader", email: "reader@example.com" },
+        requestContext: { formAgeMs: -1 },
+      },
+      {
+        id: "comment_invalid_age",
+        now,
+        checks: [createHoneypotTimingCheck()],
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.comment.moderationStatus).toBe("suspicious");
+    expect(result.comment.moderationAudit[0]?.decision).toMatchObject({
+      source: "system",
+      outcome: "suspicious",
+      metadata: { signal: "invalid_form_age" },
+    });
+  });
+
+  it("rate limits by actor plus post instead of globally throttling the post", () => {
+    const store = new InMemoryRateLimitStore();
+    const check = createScopedRateLimitCheck({ maxAttempts: 1, store });
+    const makeComment = (id: string, ipHash: string) =>
+      buildComment(
+        {
+          postSlug: "welcome",
+          body: "Hello",
+          commenter: { kind: "anonymous", name: "Reader", email: `${id}@example.com` },
+          requestContext: { ipHash },
+        },
+        { id, now, checks: [check] },
+      );
+
+    const first = makeComment("comment_1", "ip_1");
+    const secondDifferentActor = makeComment("comment_2", "ip_2");
+    const secondSameActor = makeComment("comment_3", "ip_1");
+
+    expect(first).toMatchObject({ ok: true });
+    expect(secondDifferentActor).toMatchObject({ ok: true });
+    expect(secondSameActor).toMatchObject({
+      ok: true,
+      comment: { moderationStatus: "blocked" },
+    });
+  });
+
+  it("records suspicious moderation transitions as suspicious audit outcomes", () => {
+    const comment: CommentRecord = {
+      id: "comment_1",
+      postSlug: "welcome",
+      body: "Hello",
+      commenter: { kind: "anonymous", displayName: "Ada" },
+      privateFields: { email: "ada@example.com" },
+      moderationStatus: "approved",
+      moderationAudit: [],
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: now,
+    };
+    const repository = new InMemoryCommentRepository([comment]);
+    const updated = repository.updateModerationStatus(
+      "comment_1",
+      "suspicious",
+      now,
+      { reason: "Needs review" },
+    );
+
+    expect(updated?.moderationAudit[0]?.decision).toMatchObject({
+      source: "system",
+      outcome: "suspicious",
+      reason: "Needs review",
+      metadata: { status: "suspicious" },
+    });
   });
 
   it("returns defensive comment copies from the repository", () => {
