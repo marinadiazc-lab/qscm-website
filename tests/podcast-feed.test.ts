@@ -365,11 +365,43 @@ describe("private feed token service", () => {
       reason: "token_not_found",
     });
     expect(repository.deniedProbes.at(-1)).toMatchObject({
-      publicationId: "pub_1",
       showSlug: "main",
-      showId: "show_1",
       reason: "token_not_found",
       tokenHash: hashPrivateFeedToken("not-a-real-token"),
+    });
+    expect(repository.deniedProbes.at(-1)?.publicationId).toBeUndefined();
+    expect(repository.deniedProbes.at(-1)?.showId).toBeUndefined();
+  });
+
+  it("returns forbidden when a valid scoped token requests a different show", async () => {
+    const repository = new InMemoryPodcastRepository({
+      shows: [
+        show({ defaultAccessRule: { kind: "private_token" } }),
+        show({
+          id: "show_2",
+          slug: "other",
+          defaultAccessRule: { kind: "private_token" },
+        }),
+      ],
+      episodes: [episode({ showId: "show_2" })],
+    });
+    const issued = await issuePrivateFeedToken({
+      repository,
+      publicationId: "pub_1",
+      show: show(),
+      now,
+    });
+    const result = await buildPrivatePodcastFeed({
+      repository,
+      showSlug: "other",
+      rawToken: issued.rawToken,
+      generatedAt: now,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      status: 403,
+      reason: "token_show_mismatch",
     });
   });
 

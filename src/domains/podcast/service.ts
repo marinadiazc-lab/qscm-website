@@ -246,44 +246,11 @@ export async function buildPrivatePodcastFeed(
   const generatedAt = input.generatedAt ?? new Date();
   const tokenHash = hashPrivateFeedToken(input.rawToken);
   const token = await input.repository.findTokenByHash(tokenHash);
-  const show = await input.repository.findShowBySlug(input.showSlug, token?.publicationId);
-
-  if (!show) {
-    await recordDeniedFeedProbe(input.repository, {
-      publicationId: token?.publicationId,
-      tokenHash,
-      showSlug: input.showSlug,
-      tokenId: token?.id,
-      showId: token?.showId,
-      reason: "show_not_found",
-      occurredAt: generatedAt,
-      requestContext: input.requestContext,
-    });
-    if (token) {
-      await input.repository.recordAuditEvent({
-        id: createPodcastId(),
-        tokenId: token.id,
-        kind: "access_denied",
-        occurredAt: generatedAt,
-        reason: "show_not_found",
-        requestContext: input.requestContext,
-      });
-    }
-
-    return {
-      allowed: false,
-      status: 404,
-      reason: "show_not_found",
-      deniedEpisodeIds: [],
-    };
-  }
 
   if (!token) {
     await recordDeniedFeedProbe(input.repository, {
-      publicationId: show.publicationId,
       tokenHash,
       showSlug: input.showSlug,
-      showId: show.id,
       reason: "token_not_found",
       occurredAt: generatedAt,
       requestContext: input.requestContext,
@@ -293,6 +260,35 @@ export async function buildPrivatePodcastFeed(
       allowed: false,
       status: 401,
       reason: "token_not_found",
+      deniedEpisodeIds: [],
+    };
+  }
+
+  const show = await input.repository.findShowBySlug(input.showSlug, token?.publicationId);
+
+  if (!show) {
+    await recordDeniedFeedProbe(input.repository, {
+      publicationId: token.publicationId,
+      tokenHash,
+      showSlug: input.showSlug,
+      tokenId: token.id,
+      reason: "show_not_found",
+      occurredAt: generatedAt,
+      requestContext: input.requestContext,
+    });
+    await input.repository.recordAuditEvent({
+      id: createPodcastId(),
+      tokenId: token.id,
+      kind: "access_denied",
+      occurredAt: generatedAt,
+      reason: "show_not_found",
+      requestContext: input.requestContext,
+    });
+
+    return {
+      allowed: false,
+      status: 404,
+      reason: "show_not_found",
       deniedEpisodeIds: [],
     };
   }
@@ -323,7 +319,7 @@ export async function buildPrivatePodcastFeed(
       allowed: false,
       deniedEpisodeIds: result.deniedEpisodeIds,
       reason: result.decision.reason,
-      status: result.decision.reason.startsWith("token_") ? 401 : 403,
+      status: statusForDeniedPrivateFeed(result.decision.reason),
     };
   }
 
@@ -352,6 +348,12 @@ async function recordDeniedFeedProbe(
   probe: PrivateFeedDeniedProbe,
 ) {
   await repository.recordDeniedFeedProbe?.(probe);
+}
+
+function statusForDeniedPrivateFeed(reason: string): 401 | 403 {
+  return ["token_inactive", "token_revoked", "token_rotated", "token_expired"].includes(reason)
+    ? 401
+    : 403;
 }
 
 export function serializePodcastRss(feed: PodcastRssFeed) {
