@@ -1,17 +1,24 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbClient } from "@/src/db";
-import { schema } from "@/src/db";
+import { db, schema } from "@/src/db";
+import type {
+  EmailProviderEventClaimResult,
+  EmailProviderEventRepository,
+} from "./events";
 import type {
   CreateEmailSendIntentInput,
   EmailDeliveryLog,
   EmailMetadata,
+  EmailProviderEvent,
   EmailSendIntent,
   EmailSendResult,
 } from "./types";
 import type { EmailSendIntentRepository } from "./send-intents";
 
-export class DrizzleEmailSendIntentRepository implements EmailSendIntentRepository {
-  constructor(private readonly db: DbClient) {}
+export class DrizzleEmailSendIntentRepository
+  implements EmailSendIntentRepository, EmailProviderEventRepository
+{
+  constructor(private readonly db: DbClient = db) {}
 
   async createOrGet(input: CreateEmailSendIntentInput): Promise<EmailSendIntent> {
     const inserted = await this.db
@@ -191,6 +198,73 @@ export class DrizzleEmailSendIntentRepository implements EmailSendIntentReposito
     return rows.map(toLog);
   }
 
+  async claimProviderEvent(
+    event: EmailProviderEvent,
+    input: {
+      payloadHash?: string;
+      payload: Record<string, unknown>;
+    },
+  ): Promise<EmailProviderEventClaimResult> {
+    const [claimed] = await this.db
+      .insert(schema.webhookEventLogs)
+      .values({
+        provider: event.provider,
+        providerEventId: event.id,
+        eventType: event.type,
+        state: "processing",
+        payloadHash: input.payloadHash,
+        payload: input.payload,
+        attemptCount: 1,
+      })
+      .onConflictDoUpdate({
+        target: [schema.webhookEventLogs.provider, schema.webhookEventLogs.providerEventId],
+        set: {
+          state: "processing",
+          payloadHash: input.payloadHash,
+          payload: input.payload,
+          attemptCount: sql`${schema.webhookEventLogs.attemptCount} + 1`,
+          lastError: null,
+        },
+        setWhere: sql`${schema.webhookEventLogs.state} in ('received', 'failed')`,
+      })
+      .returning();
+
+    if (claimed) {
+      await this.persistProviderEvent(event);
+      return { state: "claimed" };
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(schema.webhookEventLogs)
+      .where(
+        and(
+          eq(schema.webhookEventLogs.provider, event.provider),
+          eq(schema.webhookEventLogs.providerEventId, event.id),
+        ),
+      )
+      .limit(1);
+
+    if (existing?.state === "processed" || existing?.state === "ignored") {
+      return { state: existing.state };
+    }
+
+    return { state: "processing_duplicate" };
+  }
+
+  async markProviderEventProcessed(event: EmailProviderEvent) {
+    const processedAt = new Date();
+    await this.db
+      .update(schema.emailProviderEvents)
+      .set({ processedAt })
+      .where(eq(schema.emailProviderEvents.id, event.id));
+    await this.markWebhookLog(event, "processed");
+  }
+
+  async markProviderEventFailed(event: EmailProviderEvent, errorMessage: string) {
+    await this.markWebhookLog(event, "failed", errorMessage);
+  }
+
   private async requireIntent(intentId: string) {
     const existing = await this.db.query.emailSendIntents.findFirst({
       where: eq(schema.emailSendIntents.id, intentId),
@@ -201,6 +275,42 @@ export class DrizzleEmailSendIntentRepository implements EmailSendIntentReposito
     }
 
     return toIntent(existing);
+  }
+
+  private async persistProviderEvent(event: EmailProviderEvent) {
+    await this.db
+      .insert(schema.emailProviderEvents)
+      .values({
+        id: event.id,
+        provider: event.provider,
+        eventType: event.type,
+        providerMessageId: event.providerMessageId,
+        recipientEmail: event.recipientEmail,
+        payload: event.payload,
+        receivedAt: event.createdAt,
+      })
+      .onConflictDoNothing();
+  }
+
+  private async markWebhookLog(
+    event: EmailProviderEvent,
+    state: "processed" | "ignored" | "failed",
+    lastError?: string,
+  ) {
+    await this.db
+      .update(schema.webhookEventLogs)
+      .set({
+        state,
+        lastError,
+        processedAt: state === "processed" || state === "ignored" ? new Date() : undefined,
+      })
+      .where(
+        and(
+          eq(schema.webhookEventLogs.provider, event.provider),
+          eq(schema.webhookEventLogs.providerEventId, event.id),
+          eq(schema.webhookEventLogs.state, "processing"),
+        ),
+      );
   }
 }
 

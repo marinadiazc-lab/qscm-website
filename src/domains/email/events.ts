@@ -16,6 +16,22 @@ export type EmailEventLogWriter = (
   log: Omit<EmailDeliveryLog, "id" | "createdAt">,
 ) => Promise<EmailDeliveryLog> | EmailDeliveryLog;
 
+export type EmailProviderEventClaimResult =
+  | { state: "claimed" }
+  | { state: "processed" | "ignored" | "processing_duplicate" };
+
+export interface EmailProviderEventRepository {
+  claimProviderEvent(
+    event: EmailProviderEvent,
+    input: {
+      payloadHash?: string;
+      payload: Record<string, unknown>;
+    },
+  ): Promise<EmailProviderEventClaimResult>;
+  markProviderEventProcessed(event: EmailProviderEvent): Promise<void>;
+  markProviderEventFailed(event: EmailProviderEvent, errorMessage: string): Promise<void>;
+}
+
 export class EmailProviderEventProcessor {
   private readonly processedEventIds = new Set<string>();
 
@@ -23,15 +39,15 @@ export class EmailProviderEventProcessor {
     private readonly options: {
       updateSubscriberStatus?: EmailEventSubscriberUpdater;
       logDelivery?: EmailEventLogWriter;
+      dedupeInMemory?: boolean;
     } = {},
   ) {}
 
   async process(event: EmailProviderEvent) {
-    if (this.processedEventIds.has(event.id)) {
+    const dedupeInMemory = this.options.dedupeInMemory ?? true;
+    if (dedupeInMemory && this.processedEventIds.has(event.id)) {
       return { processed: false, reason: "duplicate" as const };
     }
-
-    this.processedEventIds.add(event.id);
 
     const status = statusForEvent(event);
     if (status) {
@@ -57,7 +73,42 @@ export class EmailProviderEventProcessor {
       },
     });
 
+    if (dedupeInMemory) {
+      this.processedEventIds.add(event.id);
+    }
+
     return { processed: true as const, reason: "processed" as const };
+  }
+}
+
+export class EmailProviderWebhookHandler {
+  constructor(
+    private readonly options: {
+      repository: EmailProviderEventRepository;
+      processor: EmailProviderEventProcessor;
+      payloadHash?: (payload: Record<string, unknown>) => string | undefined;
+    },
+  ) {}
+
+  async handle(event: EmailProviderEvent) {
+    const claim = await this.options.repository.claimProviderEvent(event, {
+      payload: event.payload,
+      payloadHash: this.options.payloadHash?.(event.payload),
+    });
+
+    if (claim.state !== "claimed") {
+      return { processed: false as const, reason: claim.state };
+    }
+
+    try {
+      const result = await this.options.processor.process(event);
+      await this.options.repository.markProviderEventProcessed(event);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Email provider event processing failed.";
+      await this.options.repository.markProviderEventFailed(event, message);
+      throw error;
+    }
   }
 }
 
@@ -66,6 +117,7 @@ export function parseResendWebhookEvent(payload: Record<string, unknown>): Email
   const email = isRecord(data.email) ? data.email : data;
   const createdAt = typeof payload.created_at === "string" ? payload.created_at : undefined;
   const rawType = String(payload.type ?? "unknown");
+  const metadata = collectMetadata(payload, data, email);
 
   return {
     id: String(payload.id ?? fallbackEventId(rawType, payload, data, email)),
@@ -73,7 +125,11 @@ export function parseResendWebhookEvent(payload: Record<string, unknown>): Email
     type: rawType,
     createdAt: createdAt ? new Date(createdAt) : new Date(),
     providerMessageId: stringValue(email.id ?? email.email_id ?? data.email_id),
-    recipientEmail: stringValue(email.to ?? email.recipient ?? data.recipient ?? data.email),
+    recipientEmail: stringValue(
+      email.to ?? email.recipient ?? data.recipient ?? data.email ?? payload.email,
+    ),
+    broadcastId: metadata.broadcastId,
+    subscriberId: metadata.subscriberId,
     payload,
   };
 }
@@ -132,6 +188,50 @@ function statusForContactUpdate(
   }
 
   return undefined;
+}
+
+function collectMetadata(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+  email: Record<string, unknown>,
+) {
+  const tags = tagsToMetadata(email.tags ?? data.tags ?? payload.tags);
+  const metadata = {
+    ...recordValue(email.metadata),
+    ...recordValue(data.metadata),
+    ...recordValue(payload.metadata),
+    ...tags,
+  };
+
+  return {
+    subscriberId: stringValue(
+      metadata.subscriberId ?? metadata.subscriber_id ?? metadata.qscm_subscriber_id,
+    ),
+    broadcastId: stringValue(
+      metadata.broadcastId ?? metadata.broadcast_id ?? metadata.qscm_broadcast_id,
+    ),
+  };
+}
+
+function tagsToMetadata(value: unknown): Record<string, unknown> {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+
+  return value.reduce<Record<string, unknown>>((metadata, tag) => {
+    if (isRecord(tag)) {
+      const name = stringValue(tag.name);
+      if (name) {
+        metadata[name] = tag.value;
+      }
+    }
+
+    return metadata;
+  }, {});
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 function fallbackEventId(
