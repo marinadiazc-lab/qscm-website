@@ -108,7 +108,7 @@ export function buildComment(
     privateFields: toPrivateFields(normalizedInput.commenter),
     moderationStatus,
     moderationAudit: toModerationAuditEntries(decisions, options.now),
-    requestContext: normalizedInput.requestContext,
+    requestContext: toStoredModerationRequestContext(normalizedInput.requestContext),
     createdAt: options.now,
     updatedAt: options.now,
     publishedAt,
@@ -280,6 +280,26 @@ function toPrivateFields(
   return {
     email: commenter.email,
     registeredUserId: commenter.userId,
+  };
+}
+
+function toStoredModerationRequestContext(
+  context: CreateCommentInput["requestContext"],
+): CreateCommentInput["requestContext"] {
+  if (!context) {
+    return undefined;
+  }
+
+  return {
+    ipHash: context.ipHash,
+    emailHash: context.emailHash,
+    userAgentHash: context.userAgentHash,
+    sessionIdHash: context.sessionIdHash,
+    formAgeMs:
+      typeof context.formAgeMs === "number" && Number.isFinite(context.formAgeMs)
+        ? context.formAgeMs
+        : undefined,
+    honeypotFilled: context.honeypotFilled ? true : undefined,
   };
 }
 

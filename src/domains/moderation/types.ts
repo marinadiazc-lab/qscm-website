@@ -80,8 +80,11 @@ export interface ModerationAuditEntry {
 
 export interface ModerationRequestContext {
   ipHash?: string;
+  emailHash?: string;
   userAgentHash?: string;
   sessionIdHash?: string;
+  formAgeMs?: number;
+  honeypotFilled?: boolean;
 }
 
 export interface ModerationCheckInput {
