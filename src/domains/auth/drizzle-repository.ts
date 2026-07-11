@@ -1,8 +1,9 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "@/src/db";
 import * as schema from "@/src/db/schema";
 import type {
+  AccountLinkingRecord,
   AuthAccount,
   AuthProvider,
   AuthProviderAccountId,
@@ -80,6 +81,38 @@ export class DrizzleAuthRepository implements AuthRepository {
     return accountFromRow(row);
   }
 
+  async saveAccountForActiveUser(account: AuthAccount): Promise<AuthAccount | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [user] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(
+          and(
+            eq(schema.users.id, account.userId),
+            eq(schema.users.status, "active"),
+            isNull(schema.users.disabledAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+
+      if (!user) {
+        return undefined;
+      }
+
+      const [row] = await tx
+        .insert(schema.authAccounts)
+        .values(toAccountRow(account))
+        .onConflictDoUpdate({
+          target: schema.authAccounts.id,
+          set: toAccountRow(account),
+        })
+        .returning();
+
+      return accountFromRow(row);
+    });
+  }
+
   async findAccountById(id: string): Promise<AuthAccount | undefined> {
     const [row] = await this.db
       .select()
@@ -129,6 +162,38 @@ export class DrizzleAuthRepository implements AuthRepository {
       .returning();
 
     return sessionFromRow(row);
+  }
+
+  async saveSessionForActiveUser(session: AuthSession): Promise<AuthSession | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [user] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(
+          and(
+            eq(schema.users.id, session.userId),
+            eq(schema.users.status, "active"),
+            isNull(schema.users.disabledAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+
+      if (!user) {
+        return undefined;
+      }
+
+      const [row] = await tx
+        .insert(schema.authSessions)
+        .values(toSessionRow(session))
+        .onConflictDoUpdate({
+          target: schema.authSessions.id,
+          set: toSessionRow(session),
+        })
+        .returning();
+
+      return sessionFromRow(row);
+    });
   }
 
   async findSessionById(id: AuthSessionId): Promise<AuthSession | undefined> {
@@ -256,6 +321,39 @@ export class DrizzleAuthRepository implements AuthRepository {
       .returning();
 
     return row ? magicLinkFromRow(row) : undefined;
+  }
+
+  async saveAccountLinkingRecord(
+    record: AccountLinkingRecord,
+  ): Promise<AccountLinkingRecord> {
+    const [row] = await this.db
+      .insert(schema.accountLinkingRecords)
+      .values(toAccountLinkingRecordRow(record))
+      .onConflictDoUpdate({
+        target: schema.accountLinkingRecords.id,
+        set: toAccountLinkingRecordRow(record),
+      })
+      .returning();
+
+    return accountLinkingRecordFromRow(row);
+  }
+
+  async listAccountLinkingRecordsForProvider(
+    provider: AuthProvider,
+    providerAccountId: AuthProviderAccountId,
+  ): Promise<AccountLinkingRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.accountLinkingRecords)
+      .where(
+        and(
+          eq(schema.accountLinkingRecords.provider, provider),
+          eq(schema.accountLinkingRecords.providerAccountId, providerAccountId),
+        ),
+      )
+      .orderBy(schema.accountLinkingRecords.createdAt);
+
+    return rows.map(accountLinkingRecordFromRow).reverse();
   }
 
   private async rolesForUser(userId: AuthUserId): Promise<AuthUser["roles"]> {
@@ -400,6 +498,38 @@ function magicLinkFromRow(row: typeof schema.magicLinkRequests.$inferSelect): Ma
     sessionId: row.sessionId ?? undefined,
     redirectTo: row.redirectTo ?? undefined,
     requestContext: requestContext(row.requestContext),
+  };
+}
+
+function toAccountLinkingRecordRow(
+  record: AccountLinkingRecord,
+): typeof schema.accountLinkingRecords.$inferInsert {
+  return {
+    id: record.id,
+    userId: record.userId,
+    provider: record.provider,
+    providerAccountId: record.providerAccountId,
+    email: record.email ? normalizeAuthEmail(record.email) : undefined,
+    decisionOutcome: record.decisionOutcome,
+    decisionReason: record.decisionReason,
+    metadata: record.metadata ?? {},
+    createdAt: record.createdAt,
+  };
+}
+
+function accountLinkingRecordFromRow(
+  row: typeof schema.accountLinkingRecords.$inferSelect,
+): AccountLinkingRecord {
+  return {
+    id: row.id,
+    userId: row.userId ?? undefined,
+    provider: row.provider,
+    providerAccountId: row.providerAccountId,
+    email: row.email ?? undefined,
+    decisionOutcome: row.decisionOutcome as AccountLinkingRecord["decisionOutcome"],
+    decisionReason: row.decisionReason as AccountLinkingRecord["decisionReason"],
+    metadata: authMetadata(row.metadata),
+    createdAt: row.createdAt,
   };
 }
 

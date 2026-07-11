@@ -5,6 +5,7 @@ export type MagicLinkRequestId = string;
 export type AuthProviderAccountId = string;
 export type AuthEmailAddress = string;
 export type MagicLinkTokenHash = string;
+export type AccountLinkingRecordId = string;
 
 export type AuthProvider =
   | "google"
@@ -110,6 +111,18 @@ export interface MagicLinkRequest {
   sessionId?: AuthSessionId;
   redirectTo?: string;
   requestContext?: AuthRequestContext;
+}
+
+export interface AccountLinkingRecord {
+  id: AccountLinkingRecordId;
+  userId?: AuthUserId;
+  provider: AuthProvider;
+  providerAccountId: AuthProviderAccountId;
+  email?: AuthEmailAddress;
+  decisionOutcome: AccountLinkingDecisionOutcome;
+  decisionReason: AccountLinkingDecisionReason;
+  metadata?: AuthMetadata;
+  createdAt: Date;
 }
 
 export type AccountLinkingDecisionOutcome =

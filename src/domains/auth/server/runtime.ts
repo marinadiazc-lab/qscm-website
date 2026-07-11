@@ -11,15 +11,24 @@ import { DrizzleAuthRepository } from "../drizzle-repository";
 import type { AuthAccount, AuthRepository, AuthSession, AuthUser } from "../index";
 import {
   AUTH_SESSION_COOKIE,
+  FetchOAuthProviderClient,
+  OAuthProviderError,
+  type OAuthProviderClient,
+  accountLinkingRecordFromDecision,
+  authAccountFromOAuthProfile,
   authSessionStatusForTime,
   buildMagicLinkUrl,
   createAuthId,
   createOpaqueToken,
   getAuthBaseUrl,
+  getOAuthProviderConfig,
   hashAuthToken,
   magicLinkExpiresAt,
   normalizeAuthEmail,
+  decideOAuthAccountLink,
+  sanitizeInternalRedirect,
   sessionExpiresAt,
+  type OAuthProvider,
 } from "../index";
 import { deliverMagicLinkEmail, type MagicLinkDeliveryResult } from "../magic-link-email";
 
@@ -34,6 +43,20 @@ export type RequestMagicLinkResult = {
 export type ConsumeMagicLinkResult =
   | { status: "authenticated"; user: AuthUser; session: AuthSession }
   | { status: "invalid" | "expired" | "already_used"; message: string };
+
+export type CompleteOAuthCallbackResult =
+  | {
+      status: "authenticated";
+      user: AuthUser;
+      session: AuthSession;
+      account: AuthAccount;
+    }
+  | { status: "linked" | "already_linked"; user: AuthUser; account: AuthAccount }
+  | {
+      status: "requires_confirmation" | "rejected" | "provider_error";
+      reason: string;
+      message: string;
+    };
 
 let repositoryPromise: Promise<AuthRepository> | undefined;
 
@@ -107,7 +130,7 @@ export async function requestMagicLink(input: {
     status: "requested",
     requestedAt: now,
     expiresAt: magicLinkExpiresAt(now),
-    redirectTo: sanitizeRedirect(input.redirectTo),
+    redirectTo: sanitizeInternalRedirect(input.redirectTo),
   });
   const magicLinkUrl = buildMagicLinkUrl({
     baseUrl: input.baseUrl ?? getAuthBaseUrl(),
@@ -155,20 +178,217 @@ export async function consumeMagicLinkToken(input: {
   }
 
   const user = await findOrCreateMagicLinkUser(repository, request.email, now);
-  const sessionToken = createOpaqueToken();
-  const session = await repository.saveSession({
-    id: createAuthId("session"),
-    userId: user.id,
-    tokenHash: hashAuthToken(sessionToken),
-    status: "active",
-    createdAt: now,
-    expiresAt: sessionExpiresAt(now),
-  });
+
+  if (!user) {
+    return { status: "invalid", message: "That sign-in link is not valid." };
+  }
+
+  const session = await createAndSetSession(repository, user.id, now);
+
+  if (!session) {
+    await repository.saveMagicLinkRequest({ ...request, userId: user.id });
+
+    return { status: "invalid", message: "That sign-in link is not valid." };
+  }
 
   await repository.saveMagicLinkRequest({ ...request, userId: user.id, sessionId: session.id });
-  await setSessionCookie(sessionToken, session.expiresAt);
 
   return { status: "authenticated", user, session };
+}
+
+export async function completeOAuthCallback(input: {
+  provider: OAuthProvider;
+  code: string;
+  redirectUri: string;
+  targetUser?: AuthUser;
+  intent: "sign_in" | "link";
+  now?: Date;
+  client?: OAuthProviderClient;
+}): Promise<CompleteOAuthCallbackResult> {
+  const config = getOAuthProviderConfig(input.provider);
+
+  if (!config.enabled) {
+    return {
+      status: "provider_error",
+      reason: "provider_disabled",
+      message: config.disabledReason ?? "That provider is not configured.",
+    };
+  }
+
+  const repository = await getAuthRepository();
+  const now = input.now ?? new Date();
+  const client = input.client ?? new FetchOAuthProviderClient();
+
+  try {
+    const token = await client.exchangeCode({
+      config,
+      code: input.code,
+      redirectUri: input.redirectUri,
+    });
+    const profile = await client.fetchProfile({ config, token });
+
+    if (profile.provider !== input.provider) {
+      return {
+        status: "provider_error",
+        reason: "provider_mismatch",
+        message: "The OAuth provider returned an unexpected profile.",
+      };
+    }
+
+    const existingAccount = await repository.findAccountByProvider(
+      profile.provider,
+      profile.providerAccountId,
+    );
+    const existingUserWithEmail = profile.email
+      ? await repository.findUserByEmail(profile.email)
+      : undefined;
+    const decision = decideOAuthAccountLink({
+      profile,
+      targetUser: input.targetUser,
+      existingAccount,
+      existingUserWithEmail,
+    });
+
+    await repository.saveAccountLinkingRecord(
+      accountLinkingRecordFromDecision({
+        id: createAuthId("link"),
+        decision,
+        profile,
+        createdAt: now,
+        metadata: {
+          intent: input.intent,
+        },
+      }),
+    );
+
+    if (decision.outcome === "reject") {
+      return {
+        status: "rejected",
+        reason: decision.reason,
+        message: decision.message,
+      };
+    }
+
+    if (decision.outcome === "requires_confirmation") {
+      return {
+        status: "requires_confirmation",
+        reason: decision.reason,
+        message: decision.message,
+      };
+    }
+
+    if (decision.outcome === "link") {
+      const account = await saveAccountForActiveUser(
+        repository,
+        authAccountFromOAuthProfile({
+          id: createAuthId("account"),
+          userId: decision.targetUserId,
+          profile,
+          now,
+        }),
+      );
+
+      if (!account) {
+        return disabledUserResult();
+      }
+
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
+
+      return { status: "linked", user, account };
+    }
+
+    if (decision.outcome === "already_linked") {
+      if (!existingAccount || existingAccount.status !== "active") {
+        return {
+          status: "rejected",
+          reason: "provider_account_inactive",
+          message: "This provider account cannot be used for sign-in.",
+        };
+      }
+
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
+
+      const account = await saveAccountForActiveUser(repository, {
+        ...existingAccount,
+        email: profile.email ? normalizeAuthEmail(profile.email) : existingAccount.email,
+        emailVerifiedAt: profile.emailVerified ? now : existingAccount.emailVerifiedAt,
+        displayName: profile.displayName ?? existingAccount.displayName,
+        avatarUrl: profile.avatarUrl ?? existingAccount.avatarUrl,
+        lastAuthenticatedAt: now,
+        updatedAt: now,
+      });
+
+      if (!account) {
+        return disabledUserResult();
+      }
+
+      if (input.targetUser) {
+        return { status: "already_linked", user, account };
+      }
+
+      const session = await createAndSetSession(repository, user.id, now);
+
+      if (!session) {
+        return disabledUserResult();
+      }
+
+      return { status: "authenticated", user, session, account };
+    }
+
+    const user = await repository.saveUser({
+      id: createAuthId("user"),
+      email: decision.email,
+      emailVerifiedAt: now,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      roles: ["reader"],
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const account = await saveAccountForActiveUser(
+      repository,
+      authAccountFromOAuthProfile({
+        id: createAuthId("account"),
+        userId: user.id,
+        profile,
+        now,
+      }),
+    );
+    const session = await createAndSetSession(repository, user.id, now);
+
+    if (!account || !session) {
+      return disabledUserResult();
+    }
+
+    return { status: "authenticated", user, session, account };
+  } catch (error) {
+    if (error instanceof OAuthProviderError) {
+      return {
+        status: "provider_error",
+        reason: error.code,
+        message: error.message,
+      };
+    }
+
+    if (isAuthProviderAccountConflictError(error)) {
+      return {
+        status: "rejected",
+        reason: "provider_account_conflict",
+        message: "This provider account is already linked to another user.",
+      };
+    }
+
+    throw error;
+  }
 }
 
 export async function revokeCurrentSession(): Promise<void> {
@@ -191,12 +411,17 @@ async function findOrCreateMagicLinkUser(
   repository: AuthRepository,
   email: string,
   now: Date,
-): Promise<AuthUser> {
+): Promise<AuthUser | undefined> {
   const existingUser = await repository.findUserByEmail(email);
 
   if (existingUser) {
-    await ensureEmailMagicLinkAccount(repository, existingUser, now);
-    return existingUser;
+    if (!isActiveAuthUser(existingUser)) {
+      return undefined;
+    }
+
+    const account = await ensureEmailMagicLinkAccount(repository, existingUser, now);
+
+    return account ? existingUser : undefined;
   }
 
   const user: AuthUser = await repository.saveUser({
@@ -209,27 +434,27 @@ async function findOrCreateMagicLinkUser(
     updatedAt: now,
   });
 
-  await ensureEmailMagicLinkAccount(repository, user, now);
+  const account = await ensureEmailMagicLinkAccount(repository, user, now);
 
-  return user;
+  return account ? user : undefined;
 }
 
 async function ensureEmailMagicLinkAccount(
   repository: AuthRepository,
   user: AuthUser,
   now: Date,
-): Promise<AuthAccount> {
+): Promise<AuthAccount | undefined> {
   const existingAccount = await repository.findAccountByProvider("email_magic_link", user.email);
 
   if (existingAccount) {
-    return repository.saveAccount({
+    return saveAccountForActiveUser(repository, {
       ...existingAccount,
       lastAuthenticatedAt: now,
       updatedAt: now,
     });
   }
 
-  return repository.saveAccount({
+  return saveAccountForActiveUser(repository, {
     id: createAuthId("account"),
     userId: user.id,
     provider: "email_magic_link",
@@ -242,6 +467,75 @@ async function ensureEmailMagicLinkAccount(
     createdAt: now,
     updatedAt: now,
   });
+}
+
+function isActiveAuthUser(user: AuthUser): boolean {
+  return user.status === "active" && !user.disabledAt;
+}
+
+async function createAndSetSession(
+  repository: AuthRepository,
+  userId: string,
+  now: Date,
+): Promise<AuthSession | undefined> {
+  const sessionToken = createOpaqueToken();
+  const sessionInput: AuthSession = {
+    id: createAuthId("session"),
+    userId,
+    tokenHash: hashAuthToken(sessionToken),
+    status: "active",
+    createdAt: now,
+    expiresAt: sessionExpiresAt(now),
+  };
+  const session = repository.saveSessionForActiveUser
+    ? await repository.saveSessionForActiveUser(sessionInput)
+    : await repository.saveSession(sessionInput);
+
+  if (!session) {
+    return undefined;
+  }
+
+  await setSessionCookie(sessionToken, session.expiresAt);
+
+  return session;
+}
+
+async function saveAccountForActiveUser(
+  repository: AuthRepository,
+  account: AuthAccount,
+) {
+  return repository.saveAccountForActiveUser
+    ? repository.saveAccountForActiveUser(account)
+    : repository.saveAccount(account);
+}
+
+function isAuthProviderAccountConflictError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const fields = error as {
+    code?: unknown;
+    constraint?: unknown;
+    constraint_name?: unknown;
+    message?: unknown;
+  };
+
+  return (
+    fields.code === "23505" &&
+    (fields.constraint === "auth_accounts_provider_account_unique" ||
+      fields.constraint_name === "auth_accounts_provider_account_unique" ||
+      (typeof fields.message === "string" &&
+        fields.message.includes("auth_accounts_provider_account_unique")))
+  );
+}
+
+function disabledUserResult(): CompleteOAuthCallbackResult {
+  return {
+    status: "rejected",
+    reason: "disabled_user",
+    message: "This account is disabled.",
+  };
 }
 
 async function setSessionCookie(token: string, expiresAt: Date): Promise<void> {
@@ -306,12 +600,4 @@ function createMagicLinkSendService() {
 
 function hasTransactionalEmailConfig(env: NodeJS.ProcessEnv = process.env) {
   return Boolean(env.RESEND_API_KEY?.trim() && env.RESEND_DEFAULT_FROM?.trim());
-}
-
-function sanitizeRedirect(redirectTo?: string): string | undefined {
-  if (!redirectTo || !redirectTo.startsWith("/") || redirectTo.startsWith("//")) {
-    return undefined;
-  }
-
-  return redirectTo;
 }

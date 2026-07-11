@@ -33,16 +33,18 @@ URL precedence:
 - `VERCEL_PROJECT_PRODUCTION_URL`
 - `http://localhost:3000` for local fallback
 
-OAuth providers are disabled unless both credentials for that provider are present:
+Google and Facebook OAuth providers are disabled unless both credentials for that provider are present:
 
 - `AUTH_GOOGLE_CLIENT_ID`
 - `AUTH_GOOGLE_CLIENT_SECRET`
 - `AUTH_FACEBOOK_CLIENT_ID`
 - `AUTH_FACEBOOK_CLIENT_SECRET`
-- `AUTH_APPLE_CLIENT_ID`
-- `AUTH_APPLE_CLIENT_SECRET`
+
+Apple OAuth is intentionally disabled in this milestone even when `AUTH_APPLE_CLIENT_ID` and `AUTH_APPLE_CLIENT_SECRET` are present. It should only be enabled after the callback verifies Apple `id_token` signatures and claims against Apple's JWKS.
 
 Disabled providers appear as unavailable on `/login` and redirect back with a usable error from `/api/auth/oauth/[provider]`.
+
+Configured providers use `/api/auth/oauth/[provider]` to start the authorization-code flow and `/api/auth/oauth/[provider]/callback` to complete it. The start route stores short-lived OAuth state in an HTTP-only cookie and the callback rejects missing, mismatched, or expired state before exchanging the code.
 
 ## OAuth linking
 
@@ -58,7 +60,17 @@ Provider account linking is conservative by default:
 
 This lets account settings flows be explicit while preventing unsafe background merges during sign-in.
 
-Signed-in users can start explicit provider linking from `/account` by choosing to link another provider. The OAuth callback exchange is intentionally not completed without live app credentials; when that callback is added, it should call `decideOAuthAccountLink` with the signed-in target user and persist the resulting decision before creating or linking accounts.
+Signed-in users can start explicit provider linking from `/account` by choosing to link another provider. The callback calls `decideOAuthAccountLink` with the signed-in target user, persists an `account_linking_records` audit row, and only creates the provider account automatically when the provider returns a verified email matching the signed-in user.
+
+Sign-in callbacks for an already-linked active provider account create a durable app session for that account's active user. A linked provider cannot mint a session for a disabled user or an inactive provider account.
+
+OAuth sign-in that discovers an existing app user by verified email but without an already-linked provider account records `requires_confirmation` and does not silently merge. Unverified, mismatched, or missing provider emails are also rejected or routed to explicit confirmation. A future support/admin flow should review the audit record and complete any intentionally approved merge/link.
+
+Provider-specific notes:
+
+- Google and Facebook profiles are fetched from their userinfo endpoints after token exchange.
+- Apple sign-in is fail-closed until `id_token` signature, issuer, audience, expiration, and nonce validation are implemented against Apple's JWKS.
+- Provider client IDs/secrets and the canonical `AUTH_APP_URL`/site URL remain external configuration and are not committed to the repo.
 
 Manual/admin account merges should remain a documented support operation: inspect both users, verify ownership out of band, migrate entitlements/feed tokens/comments intentionally, then unlink or disable the duplicate provider account. Do not merge only because two providers return the same email address.
 
