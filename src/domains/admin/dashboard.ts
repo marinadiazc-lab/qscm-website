@@ -83,6 +83,8 @@ export type AdminCommentRow = {
   body: string;
   author: string;
   email: string;
+  website: string;
+  registeredUserId: string;
   status: string;
   auditCount: number;
   createdAt: Date;
@@ -388,6 +390,8 @@ export async function listAdminComments(input: {
       body: schema.comments.body,
       author: schema.comments.authorDisplayName,
       email: schema.comments.authorEmail,
+      website: schema.comments.authorWebsite,
+      registeredUserId: schema.comments.registeredUserId,
       status: schema.comments.moderationStatus,
       createdAt: schema.comments.createdAt,
       publishedAt: schema.comments.publishedAt,
@@ -410,6 +414,8 @@ export async function listAdminComments(input: {
       body: row.body,
       author: row.author,
       email: row.email ?? "",
+      website: row.website ?? "",
+      registeredUserId: row.registeredUserId ?? "",
       status: row.status,
       auditCount: await countRows(
         schema.moderationAuditEntries,

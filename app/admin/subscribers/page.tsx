@@ -6,6 +6,7 @@ import {
   AdminPageHeader,
   SubscriberTable,
 } from "../_components";
+import { requireSubscriberAdminPageAccess } from "../_access";
 import {
   getAdminPublication,
   listAdminSubscribers,
@@ -30,6 +31,8 @@ type SubscriberPageProps = {
 };
 
 export default async function AdminSubscribersPage({ searchParams }: SubscriberPageProps) {
+  await requireSubscriberAdminPageAccess();
+
   const params = (await searchParams) ?? {};
   const publication = await getAdminPublication();
 
