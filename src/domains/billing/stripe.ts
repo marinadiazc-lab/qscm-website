@@ -43,10 +43,14 @@ export class StripeRestClient {
   ) {}
 
   async createCustomer(input: StripeCustomerCreateInput): Promise<StripeCustomerCreateResult> {
-    const response = await this.request<StripeCustomerResponse>("/customers", {
-      email: input.email,
-      metadata: metadataParams(input.metadata),
-    });
+    const response = await this.request<StripeCustomerResponse>(
+      "/customers",
+      {
+        email: input.email,
+        metadata: metadataParams(input.metadata),
+      },
+      input.idempotencyKey,
+    );
 
     return {
       customerId: response.id,

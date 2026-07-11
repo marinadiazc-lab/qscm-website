@@ -1,7 +1,5 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { db, schema, type DbClient } from "@/src/db";
@@ -127,7 +125,7 @@ export class BillingService {
       stripePriceId: price.providerPriceId,
       successUrl: `${input.baseUrl}/account?billing=checkout_success`,
       cancelUrl: `${input.baseUrl}/subscribe?billing=checkout_canceled`,
-      idempotencyKey: `checkout:${input.userId}:${price.id}:${randomUUID()}`,
+      idempotencyKey: checkoutIdempotencyKey(input),
       userId: input.userId,
       subscriberId: subscriber.id,
       customerEmail: input.email,
@@ -296,7 +294,7 @@ export class BillingService {
 
     let checked = 0;
     let updated = 0;
-    const reconciliationHighWaterMark = new Date();
+    const reconciliationHighWaterMark = stripeEventSecondPrecision(new Date());
     const discrepancies: string[] = [];
 
     for (const customer of customers) {
@@ -397,53 +395,124 @@ export class BillingService {
     userId: string;
     email: string;
   }) {
-    const [existing] = await this.database
+    return this.database.transaction(async (tx) => {
+      await this.lockBillingCustomerKeys(tx, input);
+
+      const existing = await this.findBillingCustomerForCheckout(input, tx);
+
+      if (existing) {
+        return existing;
+      }
+
+      const customer = await this.client.createCustomer({
+        email: input.email,
+        idempotencyKey: customerIdempotencyKey(input),
+        metadata: {
+          publicationId: input.publicationId,
+          subscriberId: input.subscriberId,
+          userId: input.userId,
+        },
+      });
+
+      const [created] = await tx
+        .insert(schema.billingCustomers)
+        .values({
+          publicationId: input.publicationId,
+          subscriberId: input.subscriberId,
+          userId: input.userId,
+          provider: "stripe",
+          providerCustomerId: customer.customerId,
+          email: input.email,
+        })
+        .onConflictDoUpdate({
+          target: [schema.billingCustomers.provider, schema.billingCustomers.providerCustomerId],
+          set: {
+            subscriberId: input.subscriberId,
+            userId: input.userId,
+            email: input.email,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+
+      return created;
+    });
+  }
+
+  private async lockBillingCustomerKeys(
+    database: BillingDatabase,
+    input: {
+      publicationId: string;
+      subscriberId: string;
+      userId: string;
+    },
+  ) {
+    const lockKeys = [
+      `billing-customer:subscriber:${input.publicationId}:${input.subscriberId}`,
+      `billing-customer:user:${input.publicationId}:${input.userId}`,
+    ].sort();
+
+    for (const lockKey of lockKeys) {
+      await database.select({
+        locked: sql`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`,
+      });
+    }
+  }
+
+  private async findBillingCustomerForCheckout(
+    input: {
+      publicationId: string;
+      subscriberId: string;
+      userId: string;
+      email: string;
+    },
+    database: BillingDatabase = this.database,
+  ) {
+    const existing = await database
       .select()
       .from(schema.billingCustomers)
       .where(
         and(
           eq(schema.billingCustomers.publicationId, input.publicationId),
-          eq(schema.billingCustomers.userId, input.userId),
           eq(schema.billingCustomers.provider, "stripe"),
+          sql`(
+            ${schema.billingCustomers.userId} = ${input.userId}
+            or ${schema.billingCustomers.subscriberId} = ${input.subscriberId}
+          )`,
         ),
       )
-      .limit(1);
+      .limit(2);
 
-    if (existing) {
-      return existing;
+    if (existing.length === 0) {
+      return undefined;
     }
 
-    const customer = await this.client.createCustomer({
-      email: input.email,
-      metadata: {
-        publicationId: input.publicationId,
-        subscriberId: input.subscriberId,
-        userId: input.userId,
-      },
-    });
+    const preferred =
+      existing.find((customer) => customer.userId === input.userId) ??
+      existing.find((customer) => customer.subscriberId === input.subscriberId) ??
+      existing[0];
+    const conflictingCustomer = existing.find(
+      (customer) =>
+        customer.id !== preferred.id &&
+        customer.providerCustomerId !== preferred.providerCustomerId,
+    );
 
-    const [created] = await this.database
-      .insert(schema.billingCustomers)
-      .values({
-        publicationId: input.publicationId,
+    if (conflictingCustomer) {
+      throw new Error("This account is linked to multiple Stripe customers. Please contact support.");
+    }
+
+    const [updated] = await database
+      .update(schema.billingCustomers)
+      .set({
         subscriberId: input.subscriberId,
         userId: input.userId,
-        provider: "stripe",
-        providerCustomerId: customer.customerId,
         email: input.email,
+        updatedAt: new Date(),
       })
-      .onConflictDoUpdate({
-        target: [schema.billingCustomers.provider, schema.billingCustomers.providerCustomerId],
-        set: {
-          subscriberId: input.subscriberId,
-          userId: input.userId,
-          email: input.email,
-          updatedAt: new Date(),
-        },
-      })
+      .where(eq(schema.billingCustomers.id, preferred.id))
       .returning();
 
-    return created;
+    return updated ?? preferred;
   }
 
   private async findCheckoutBlockingSubscription(input: {
@@ -850,6 +919,18 @@ function fromUnixNumber(value: unknown) {
   return typeof value === "number" && value > 0 ? new Date(value * 1000) : undefined;
 }
 
+function checkoutIdempotencyKey(input: { publicationId: string; userId: string }) {
+  return `checkout:${input.publicationId}:${input.userId}`;
+}
+
+function customerIdempotencyKey(input: { publicationId: string; userId: string }) {
+  return `customer:${input.publicationId}:${input.userId}`;
+}
+
+function stripeEventSecondPrecision(date: Date) {
+  return new Date(Math.floor(date.getTime() / 1000) * 1000);
+}
+
 function shouldGrantEntitlements(status: SubscriptionStatus, accessEndsAt: Date | undefined) {
   if (!ENTITLED_STATUSES.has(status)) {
     return false;
@@ -878,5 +959,9 @@ function isOutOfOrderStripeEvent(
 
   const previous = new Date(previousEventCreatedAt);
 
-  return !Number.isNaN(previous.getTime()) && previous.getTime() > eventCreatedAt.getTime();
+  return (
+    !Number.isNaN(previous.getTime()) &&
+    stripeEventSecondPrecision(previous).getTime() >
+      stripeEventSecondPrecision(eventCreatedAt).getTime()
+  );
 }

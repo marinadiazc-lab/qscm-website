@@ -72,6 +72,7 @@ export interface CustomerPortalCreateResult {
 
 export interface StripeCustomerCreateInput {
   email: string;
+  idempotencyKey?: string;
   metadata?: BillingMetadata;
 }
 
