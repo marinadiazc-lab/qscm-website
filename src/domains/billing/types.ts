@@ -39,6 +39,7 @@ export interface CheckoutSessionCreateInput {
   tierId: TierId;
   tierPriceId: TierPriceId;
   interval: BillingInterval;
+  stripePriceId: StripeId;
   successUrl: string;
   cancelUrl: string;
   idempotencyKey: string;
@@ -67,6 +68,29 @@ export interface CustomerPortalCreateResult {
   provider: BillingProviderName;
   sessionId: StripeId;
   url: string;
+}
+
+export interface StripeCustomerCreateInput {
+  email: string;
+  metadata?: BillingMetadata;
+}
+
+export interface StripeCustomerCreateResult {
+  customerId: StripeId;
+}
+
+export interface StripeSubscriptionRecord {
+  customerId: StripeId;
+  subscriptionId: StripeId;
+  status: string;
+  productId?: StripeId;
+  priceId?: StripeId;
+  currentPeriodStart?: Date;
+  currentPeriodEnd?: Date;
+  trialEnd?: Date;
+  cancelAtPeriodEnd: boolean;
+  canceledAt?: Date;
+  metadata: Record<string, string>;
 }
 
 export type WebhookEventLogState =

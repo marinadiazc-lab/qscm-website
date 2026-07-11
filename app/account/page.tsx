@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentAuthSession } from "@/src/domains/auth/server/runtime";
+import { BillingService } from "@/src/domains/billing";
+import { getDefaultPublicationId } from "@/src/domains/subscribers/runtime";
 
 export const metadata: Metadata = {
   title: "Account",
@@ -14,6 +16,12 @@ export default async function AccountPage() {
   if (!auth) {
     redirect("/login?redirectTo=/account");
   }
+
+  const publicationId = await getDefaultPublicationId();
+  const billing = await new BillingService().getAccountBillingStatus({
+    publicationId,
+    userId: auth.user.id,
+  });
 
   return (
     <main className="page account-page">
@@ -69,12 +77,35 @@ export default async function AccountPage() {
 
         <article className="account-card">
           <h2>Subscription</h2>
-          <p className="muted">
-            Subscription details will appear here when billing data is connected.
-          </p>
-          <Link className="secondary-button" href="/subscribe">
-            View plans
-          </Link>
+          <dl className="detail-list">
+            <div>
+              <dt>Tier</dt>
+              <dd>{billing.tierName ?? "Free"}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{billing.label}</dd>
+            </div>
+            {billing.currentPeriodEnd ? (
+              <div>
+                <dt>{billing.cancelAtPeriodEnd ? "Access until" : "Renews"}</dt>
+                <dd>{formatDate(billing.currentPeriodEnd)}</dd>
+              </div>
+            ) : null}
+          </dl>
+          <div className="toolbar">
+            <Link className="secondary-button" href="/subscribe">
+              View plans
+            </Link>
+            {billing.canOpenPortal ? (
+              <form action="/api/billing/portal" method="post">
+                <input name="publicationId" type="hidden" value={publicationId} />
+                <button className="secondary-button" type="submit">
+                  Manage billing
+                </button>
+              </form>
+            ) : null}
+          </div>
         </article>
 
         <article className="account-card">
@@ -101,4 +132,10 @@ function providerLabel(provider: string): string {
     default:
       return provider;
   }
+}
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+  }).format(date);
 }

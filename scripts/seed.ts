@@ -57,7 +57,12 @@ async function seedTier(input: {
   sortOrder: number;
   defaultGracePeriodDays: number;
   entitlementKeys: string[];
-  prices: Array<{ interval: "month" | "year"; amountCents: number }>;
+  providerProductId?: string;
+  prices: Array<{
+    interval: "month" | "year";
+    amountCents: number;
+    providerPriceId?: string;
+  }>;
 }) {
   const [tier] = await db
     .insert(subscriptionTiers)
@@ -70,6 +75,8 @@ async function seedTier(input: {
       sortOrder: input.sortOrder,
       defaultGracePeriodDays: input.defaultGracePeriodDays,
       entitlementKeys: input.entitlementKeys,
+      provider: input.providerProductId ? "stripe" : undefined,
+      providerProductId: input.providerProductId,
     })
     .onConflictDoUpdate({
       target: [subscriptionTiers.publicationId, subscriptionTiers.slug],
@@ -80,6 +87,8 @@ async function seedTier(input: {
         sortOrder: input.sortOrder,
         defaultGracePeriodDays: input.defaultGracePeriodDays,
         entitlementKeys: input.entitlementKeys,
+        provider: input.providerProductId ? "stripe" : null,
+        providerProductId: input.providerProductId ?? null,
         updatedAt: new Date(),
       },
     })
@@ -90,28 +99,69 @@ async function seedTier(input: {
 
 async function seedPrices(
   tier: SubscriptionTier,
-  prices: Array<{ interval: "month" | "year"; amountCents: number }>,
+  prices: Array<{
+    interval: "month" | "year";
+    amountCents: number;
+    providerPriceId?: string;
+  }>,
 ) {
   for (const price of prices) {
+    const existingPrice = await findSeedPrice(tier.id, price.interval, price.providerPriceId);
+
     await db
       .insert(tierPrices)
       .values({
+        id: existingPrice?.id,
         tierId: tier.id,
         interval: price.interval,
         amountCents: price.amountCents,
         currency: "usd",
-        activeForCheckout: true,
+        activeForCheckout: Boolean(price.providerPriceId),
+        provider: price.providerPriceId ? "stripe" : undefined,
+        providerPriceId: price.providerPriceId,
       })
       .onConflictDoUpdate({
-        target: [tierPrices.tierId, tierPrices.interval],
+        target: tierPrices.id,
         set: {
           amountCents: price.amountCents,
           currency: "usd",
-          activeForCheckout: true,
+          activeForCheckout: Boolean(price.providerPriceId),
+          provider: price.providerPriceId ? "stripe" : null,
+          providerPriceId: price.providerPriceId ?? null,
           updatedAt: new Date(),
         },
       });
   }
+}
+
+async function findSeedPrice(
+  tierId: string,
+  interval: "month" | "year",
+  providerPriceId: string | undefined,
+) {
+  if (providerPriceId) {
+    const [byProvider] = await db
+      .select()
+      .from(tierPrices)
+      .where(
+        sql`${tierPrices.provider} = 'stripe' and ${tierPrices.providerPriceId} = ${providerPriceId}`,
+      )
+      .limit(1);
+
+    if (byProvider) {
+      return byProvider;
+    }
+  }
+
+  const [activeLocal] = await db
+    .select()
+    .from(tierPrices)
+    .where(
+      sql`${tierPrices.tierId} = ${tierId} and ${tierPrices.interval} = ${interval} and ${tierPrices.activeForCheckout} is true`,
+    )
+    .limit(1);
+
+  return activeLocal;
 }
 
 async function seedAdminUser() {
@@ -172,10 +222,19 @@ async function main() {
     description: "Paid posts and the private podcast feed.",
     sortOrder: 10,
     defaultGracePeriodDays: 7,
+    providerProductId: process.env.STRIPE_SUPPORTER_PRODUCT_ID,
     entitlementKeys: ["paid_content", "private_podcast", "tier:supporter"],
     prices: [
-      { interval: "month", amountCents: 700 },
-      { interval: "year", amountCents: 7000 },
+      {
+        interval: "month",
+        amountCents: 700,
+        providerPriceId: process.env.STRIPE_SUPPORTER_MONTHLY_PRICE_ID,
+      },
+      {
+        interval: "year",
+        amountCents: 7000,
+        providerPriceId: process.env.STRIPE_SUPPORTER_ANNUAL_PRICE_ID,
+      },
     ],
   });
 
@@ -186,6 +245,7 @@ async function main() {
     description: "Everything in Supporter plus founding member access.",
     sortOrder: 20,
     defaultGracePeriodDays: 14,
+    providerProductId: process.env.STRIPE_FOUNDING_MEMBER_PRODUCT_ID,
     entitlementKeys: [
       "paid_content",
       "private_podcast",
@@ -193,8 +253,16 @@ async function main() {
       "tier:founding-member",
     ],
     prices: [
-      { interval: "month", amountCents: 1500 },
-      { interval: "year", amountCents: 15000 },
+      {
+        interval: "month",
+        amountCents: 1500,
+        providerPriceId: process.env.STRIPE_FOUNDING_MEMBER_MONTHLY_PRICE_ID,
+      },
+      {
+        interval: "year",
+        amountCents: 15000,
+        providerPriceId: process.env.STRIPE_FOUNDING_MEMBER_ANNUAL_PRICE_ID,
+      },
     ],
   });
 

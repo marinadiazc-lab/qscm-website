@@ -38,6 +38,7 @@ export type AdminSubscriberRow = {
   syncSummary: string;
   commentCount: number;
   subscriptionSummary: string;
+  billingSummary: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -49,6 +50,8 @@ export type AdminTierRow = {
   description: string;
   status: string;
   entitlementKeys: string[];
+  provider: string;
+  providerProductId: string;
   prices: AdminTierPriceRow[];
 };
 
@@ -250,6 +253,8 @@ export async function listAdminSubscribers(input: {
             status: schema.subscriptions.status,
             source: schema.subscriptions.source,
             tierName: schema.subscriptionTiers.name,
+            providerCustomerId: schema.subscriptions.providerCustomerId,
+            providerSubscriptionId: schema.subscriptions.providerSubscriptionId,
           })
           .from(schema.subscriptions)
           .leftJoin(
@@ -262,6 +267,19 @@ export async function listAdminSubscribers(input: {
       ]);
 
       const latestSubscription = subscriptions[0];
+      const [billingCustomer] = row.userId
+        ? await db
+            .select()
+            .from(schema.billingCustomers)
+            .where(
+              and(
+                eq(schema.billingCustomers.publicationId, input.publicationId),
+                eq(schema.billingCustomers.userId, row.userId),
+                eq(schema.billingCustomers.provider, "stripe"),
+              ),
+            )
+            .limit(1)
+        : [];
 
       return {
         id: row.id,
@@ -281,6 +299,11 @@ export async function listAdminSubscribers(input: {
               latestSubscription.status,
             ].join(" / ")
           : "No paid record",
+        billingSummary: latestSubscription?.providerSubscriptionId
+          ? `sub ${latestSubscription.providerSubscriptionId}`
+          : billingCustomer?.providerCustomerId
+            ? `cus ${billingCustomer.providerCustomerId}`
+            : "No Stripe mapping",
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -303,6 +326,8 @@ export async function listAdminTiers(publicationId: string): Promise<AdminTierRo
       description: tier.description ?? "",
       status: tier.status,
       entitlementKeys: tier.entitlementKeys,
+      provider: tier.provider ?? "",
+      providerProductId: tier.providerProductId ?? "",
       prices: await listTierPrices(tier.id),
     })),
   );

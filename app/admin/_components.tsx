@@ -73,6 +73,7 @@ export function SubscriberTable({ subscribers }: { subscribers: AdminSubscriberR
             <th>Status</th>
             <th>Account</th>
             <th>Subscription</th>
+            <th>Billing</th>
             <th>Email sync</th>
             <th>Comments</th>
             <th>Updated</th>
@@ -88,6 +89,7 @@ export function SubscriberTable({ subscribers }: { subscribers: AdminSubscriberR
               <td>{subscriber.status}</td>
               <td>{subscriber.userId ? "Linked" : "Email only"}</td>
               <td>{subscriber.subscriptionSummary}</td>
+              <td>{subscriber.billingSummary}</td>
               <td>{subscriber.syncSummary}</td>
               <td>{subscriber.commentCount}</td>
               <td>{formatDate(subscriber.updatedAt)}</td>
@@ -122,6 +124,9 @@ export function TierTable({ tiers }: { tiers: AdminTierRow[] }) {
               <td>
                 <strong>{tier.name}</strong>
                 <span className="admin-cell-note">{tier.description || tier.slug}</span>
+                <span className="admin-cell-note">
+                  {tier.providerProductId ? `${tier.provider}: ${tier.providerProductId}` : "No provider product"}
+                </span>
               </td>
               <td>{tier.status}</td>
               <td>{tier.entitlementKeys.join(", ") || "None"}</td>
