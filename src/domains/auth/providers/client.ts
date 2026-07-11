@@ -115,7 +115,7 @@ export class FetchOAuthProviderClient implements OAuthProviderClient {
   }
 }
 
-function googleProfileFromPayload(payload: Record<string, unknown>): OAuthProviderProfile {
+export function googleProfileFromPayload(payload: Record<string, unknown>): OAuthProviderProfile {
   const sub = stringValue(payload.sub);
 
   if (!sub) {
@@ -132,7 +132,7 @@ function googleProfileFromPayload(payload: Record<string, unknown>): OAuthProvid
   };
 }
 
-function facebookProfileFromPayload(payload: Record<string, unknown>): OAuthProviderProfile {
+export function facebookProfileFromPayload(payload: Record<string, unknown>): OAuthProviderProfile {
   const id = stringValue(payload.id);
 
   if (!id) {
@@ -143,7 +143,7 @@ function facebookProfileFromPayload(payload: Record<string, unknown>): OAuthProv
     provider: "facebook",
     providerAccountId: id,
     email: stringValue(payload.email),
-    emailVerified: Boolean(stringValue(payload.email)),
+    emailVerified: false,
     displayName: stringValue(payload.name),
     avatarUrl: pictureUrl(payload.picture),
   };

@@ -12,6 +12,7 @@ import {
   encodeOAuthState,
   getAuthBaseUrl,
   getOAuthProviderConfig,
+  facebookProfileFromPayload,
   hasAuthRole,
   launchAuthRoles,
   InMemoryAuthRepository,
@@ -242,6 +243,23 @@ describe("OAuth account linking persistence helpers", () => {
       emailVerifiedAt: now,
       status: "active",
       lastAuthenticatedAt: now,
+    });
+  });
+});
+
+describe("OAuth provider profile parsing", () => {
+  it("does not treat Facebook emails as verified without a verification signal", () => {
+    expect(
+      facebookProfileFromPayload({
+        id: "facebook_1",
+        email: "reader@example.com",
+        name: "Reader",
+      }),
+    ).toMatchObject({
+      provider: "facebook",
+      providerAccountId: "facebook_1",
+      email: "reader@example.com",
+      emailVerified: false,
     });
   });
 });
