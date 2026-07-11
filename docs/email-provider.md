@@ -116,17 +116,32 @@ instead of passing incomplete scheduling fields.
 
 Resend webhooks should be verified with the raw request body and the Svix
 headers (`svix-id`, `svix-timestamp`, `svix-signature`) before processing.
-`EmailProviderEventProcessor` dedupes provider event ids only for the lifetime
-of the process. Durable webhook idempotency must persist `email_provider_events`
-before #52 can close. The in-process processor maps:
+`app/api/email/webhook/route.ts` reads the raw body, verifies the Resend/Svix
+signature with `RESEND_WEBHOOK_SECRET`, stores a durable webhook claim, persists
+the `email_provider_events` payload, and only then processes the event.
+
+Durable idempotency uses `webhook_event_logs` keyed by `(provider,
+provider_event_id)`. Duplicate deliveries that already reached `processed` or
+`ignored` return without mutating subscribers or delivery logs. Failed attempts
+are left retryable and record `last_error`.
+
+The processor maps:
 
 - `contact.updated` with `data.unsubscribed: true` to local `unsubscribed`
 - `email.bounced` to local `bounced`
 - `email.complained` to local `complained`
 - `email.suppressed` to local `suppressed`
 
-Delivery events are recorded through the delivery-log foundation for later M12
-admin dashboards.
+Delivery failures such as `email.failed`, `email.bounced`, and
+`email.complained` are recorded as error-level delivery logs with the provider
+event id in metadata. Resend tags or metadata named `subscriberId` /
+`subscriber_id` and `broadcastId` / `broadcast_id` are attached to the local
+event so delivery logs can link back to subscriber and broadcast rows.
+
+If a provider event omits `subscriberId`, the webhook route resolves the
+recipient email against the default publication before updating local subscriber
+status. Unknown recipients are ignored for status updates while still retaining
+the provider event and delivery log.
 
 ## Post Sharing By Email
 

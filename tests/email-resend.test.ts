@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildMagicLinkEmail,
@@ -6,6 +7,7 @@ import {
   EmailBroadcastService,
   createNewsletterBroadcastFromPost,
   createResendEmailProviderFromEnv,
+  EmailProviderWebhookHandler,
   EmailProviderEventProcessor,
   EmailSendService,
   InMemoryEmailBroadcastRepository,
@@ -13,6 +15,9 @@ import {
   InMemoryEmailSendIntentRepository,
   parseResendWebhookEvent,
   ResendEmailProvider,
+  verifyResendWebhookSignature,
+  type EmailProviderEvent,
+  type EmailProviderEventRepository,
   type EmailSendIntentReference,
 } from "../src/domains/email";
 import type { PostSummary } from "../src/content/posts";
@@ -726,4 +731,185 @@ describe("provider events", () => {
       reason: "contact.updated",
     });
   });
+
+  it("persists provider events before processing and skips durable duplicates", async () => {
+    const repository = new InMemoryProviderEventRepository();
+    const updateSubscriberStatus = vi.fn();
+    const logDelivery = vi.fn((log) => ({ id: "log_1", createdAt: now, ...log }));
+    const handler = new EmailProviderWebhookHandler({
+      repository,
+      processor: new EmailProviderEventProcessor({
+        updateSubscriberStatus,
+        logDelivery,
+      }),
+    });
+    const event = parseResendWebhookEvent({
+      id: "evt_unsubscribe",
+      type: "contact.updated",
+      created_at: now.toISOString(),
+      data: {
+        email: "reader@example.com",
+        unsubscribed: true,
+      },
+    });
+
+    const first = await handler.handle(event);
+    const duplicate = await handler.handle(event);
+
+    expect(first).toEqual({ processed: true, reason: "processed" });
+    expect(duplicate).toEqual({ processed: false, reason: "processed" });
+    expect(repository.events.get("evt_unsubscribe")?.processedAt).toBeInstanceOf(Date);
+    expect(repository.events.get("evt_unsubscribe")?.payload).toEqual(event.payload);
+    expect(updateSubscriberStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("records failed deliveries as error logs with provider event metadata", async () => {
+    const logDelivery = vi.fn((log) => ({ id: "log_1", createdAt: now, ...log }));
+    const resolveBroadcastId = vi.fn(async () => "local_broadcast_1");
+    const processor = new EmailProviderEventProcessor({ logDelivery, resolveBroadcastId });
+    const event = parseResendWebhookEvent({
+      id: "evt_failed",
+      type: "email.failed",
+      created_at: now.toISOString(),
+      data: {
+        email: {
+          id: "email_failed",
+          to: ["reader@example.com"],
+          broadcast_id: "provider_broadcast_1",
+          tags: [
+            { name: "subscriberId", value: "sub_1" },
+          ],
+        },
+      },
+    });
+
+    await processor.process(event);
+
+    expect(event).toMatchObject({
+      subscriberId: "sub_1",
+      providerBroadcastId: "provider_broadcast_1",
+    });
+    expect(event.broadcastId).toBeUndefined();
+    expect(resolveBroadcastId).toHaveBeenCalledWith({
+      provider: "resend",
+      providerBroadcastId: "provider_broadcast_1",
+    });
+    expect(logDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerMessageId: "email_failed",
+        subscriberId: "sub_1",
+        broadcastId: "local_broadcast_1",
+        recipientEmail: "reader@example.com",
+        eventType: "email.failed",
+        level: "error",
+        metadata: {
+          providerEventId: "evt_failed",
+          providerBroadcastId: "provider_broadcast_1",
+        },
+      }),
+    );
+  });
+
+  it("uses Svix delivery ids and documented object tags for Resend webhook correlation", () => {
+    const event = parseResendWebhookEvent(
+      {
+        type: "email.delivered",
+        created_at: now.toISOString(),
+        data: {
+          email_id: "email_delivered",
+          to: ["reader@example.com"],
+          broadcast_id: "broadcast_from_data",
+          tags: {
+            subscriberId: "sub_1",
+          },
+        },
+      },
+      { eventId: "msg_svix_1" },
+    );
+
+    expect(event).toMatchObject({
+      id: "msg_svix_1",
+      providerMessageId: "email_delivered",
+      recipientEmail: "reader@example.com",
+      subscriberId: "sub_1",
+      providerBroadcastId: "broadcast_from_data",
+    });
+    expect(event.broadcastId).toBeUndefined();
+  });
+
+  it("verifies Resend webhook signatures using raw-body Svix semantics", () => {
+    const rawBody = JSON.stringify({ id: "evt_1", type: "email.delivered" });
+    const secret = "whsec_" + Buffer.from("test_secret").toString("base64");
+    const headers = signedSvixHeaders({
+      rawBody,
+      secret,
+      id: "msg_1",
+      timestamp: "1783771200",
+    });
+
+    expect(() =>
+      verifyResendWebhookSignature(rawBody, headers, secret, {
+        now: () => new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      verifyResendWebhookSignature(`${rawBody}\n`, headers, secret, {
+        now: () => new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    ).toThrow(/Invalid Resend webhook signature/);
+  });
 });
+
+class InMemoryProviderEventRepository implements EmailProviderEventRepository {
+  readonly events = new Map<
+    string,
+    { event: EmailProviderEvent; payload: Record<string, unknown>; processedAt?: Date }
+  >();
+  private readonly states = new Map<string, "processing" | "processed" | "failed">();
+
+  async claimProviderEvent(event: EmailProviderEvent) {
+    const state = this.states.get(event.id);
+    if (state === "processed") {
+      return { state: "processed" as const };
+    }
+    if (state === "processing") {
+      return { state: "processing_duplicate" as const };
+    }
+
+    this.states.set(event.id, "processing");
+    this.events.set(event.id, { event, payload: event.payload });
+    return { state: "claimed" as const };
+  }
+
+  async markProviderEventProcessed(event: EmailProviderEvent) {
+    const existing = this.events.get(event.id);
+    if (existing) {
+      existing.processedAt = now;
+    }
+    this.states.set(event.id, "processed");
+  }
+
+  async markProviderEventFailed(event: EmailProviderEvent) {
+    this.states.set(event.id, "failed");
+  }
+}
+
+function signedSvixHeaders(input: {
+  rawBody: string;
+  secret: string;
+  id: string;
+  timestamp: string;
+}) {
+  const secret = input.secret.startsWith("whsec_")
+    ? input.secret.slice("whsec_".length)
+    : input.secret;
+  const signature = createHmac("sha256", Buffer.from(secret, "base64"))
+    .update(`${input.id}.${input.timestamp}.${input.rawBody}`)
+    .digest("base64");
+
+  return {
+    "svix-id": input.id,
+    "svix-timestamp": input.timestamp,
+    "svix-signature": `v1,${signature}`,
+  };
+}

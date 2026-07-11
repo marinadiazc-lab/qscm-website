@@ -329,6 +329,7 @@ export type EmailProviderEvent = {
   providerMessageId?: EmailProviderMessageId;
   recipientEmail?: EmailAddress;
   broadcastId?: EmailBroadcastId;
+  providerBroadcastId?: string;
   subscriberId?: EmailSubscriberId;
   payload: Record<string, unknown>;
 };
