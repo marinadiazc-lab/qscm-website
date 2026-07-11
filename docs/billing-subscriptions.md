@@ -25,8 +25,12 @@ The initial provider implementation intentionally throws not-configured errors. 
 ## Local Access Evaluation
 
 Post access uses the same local entitlement evaluator as private podcast access.
-The evaluator accepts local subscription state and returns whether paid access is
-currently allowed, the active tier ids, normalized entitlement keys, and the
+On server render, the post route resolves the current auth session and reads
+local subscriber, subscription, tier, and entitlement-grant rows before deciding
+whether to include the restricted post body. If auth or database state is absent,
+the route falls back to an anonymous reader instead of trusting client state.
+The evaluator accepts local subscription state and returns whether paid access
+is currently allowed, the active tier ids, normalized entitlement keys, and the
 local access end dates used for support/debugging.
 
 Access behavior covered by the local evaluator:
@@ -41,8 +45,9 @@ Access behavior covered by the local evaluator:
 - `unpaid` allows access only when an explicit remaining access window is still
   open.
 - `expired`, `paused`, and incomplete states deny paid access.
-- `comped` allows paid access from local state and may carry tier-specific
-  entitlement keys such as `tier:pro`.
+- `comped` allows paid access from local state. Active admin-comped
+  `entitlement_grants` can also override an otherwise free or ended local
+  subscription, while revoked grants are excluded from future access.
 
 Tier-specific posts check both active tier ids and `tier:<id>` entitlement keys.
 Scheduled tier changes can be represented locally with `scheduledTierChange`.
@@ -51,4 +56,7 @@ add the target tier once effective. Period-end changes replace the prior tier
 with the target tier once effective, so a completed downgrade no longer grants
 the old higher tier.
 Provider-owned checkout, portal, proration, and webhook reconciliation flows are
-still responsible for writing those local states.
+still responsible for writing subscription transition metadata. Admin/support
+grant and revoke mutations, audit-log writes for those mutations, and downstream
+email segment sync remain tracked in #188. Wiring additional auth/session or
+repository behavior needed by future provider work remains tracked in #189.

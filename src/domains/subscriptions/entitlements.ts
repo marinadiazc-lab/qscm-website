@@ -29,6 +29,8 @@ export interface SubscriptionEntitlementState {
   tierId?: TierId;
   tierIds?: TierId[];
   entitlementKeys?: EntitlementKey[];
+  compedGrantIds?: string[];
+  revokedGrantIds?: string[];
   cancelAtPeriodEnd?: boolean;
   currentPeriodEnd?: DateLike | null;
   trialEnd?: DateLike | null;
