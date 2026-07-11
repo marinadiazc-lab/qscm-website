@@ -26,6 +26,14 @@ This project uses Vitest for fast TypeScript tests around the domain modules and
 - Grace-period, canceled-through-period, expired, comped, and local tier
   transition behavior for paid access.
 
+## Coverage Added In Wave 3
+
+- Protected admin dashboard foundation with dynamic admin pages for subscribers,
+  tiers, access grants, comments, media, podcast state, and operational logs.
+- Focused admin safety tests cover CSV formula neutralization and operational
+  log redaction helpers. Production build keeps the admin pages server-rendered
+  and the subscriber export route behind its own admin guard.
+
 ## CI Gate
 
 Pull requests run lint, typecheck, tests, and build in GitHub Actions. The existing Vercel production deploy workflow also verifies the same checks before deploying from `main`.
