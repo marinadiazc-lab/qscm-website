@@ -628,7 +628,7 @@ describe("newsletter broadcasts", () => {
     });
 
     const duplicate = await broadcastService.sendBroadcast({
-      publicationId: "pub_1",
+      publicationId: "other_pub",
       broadcastId: draft!.id,
       dedupeKey: "broadcast:welcome:manual-retry",
     });

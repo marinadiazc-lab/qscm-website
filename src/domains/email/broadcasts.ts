@@ -282,6 +282,7 @@ export class EmailBroadcastService {
 
     const result = await this.sendService.sendBroadcast({
       ...input,
+      publicationId: broadcast.publicationId,
       dedupeKey: broadcastSendDedupeKey(broadcast),
       providerBroadcastId: broadcast.providerBroadcastId,
     });
