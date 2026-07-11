@@ -80,13 +80,17 @@ export async function GET(
       );
     }
 
-    const error = oauthErrorForResult(result.status, result.reason);
+    if ("reason" in result) {
+      const error = oauthErrorForResult(result.status, result.reason);
 
-    return redirectToAuthSurface(
-      error,
-      request.url,
-      storedState.intent === "link" ? "/account" : "/login",
-    );
+      return redirectToAuthSurface(
+        error,
+        request.url,
+        storedState.intent === "link" ? "/account" : "/login",
+      );
+    }
+
+    return redirectToAuthSurface("provider-callback", request.url);
   } catch (error) {
     if (error instanceof Error && error.message.includes("DATABASE_URL")) {
       return redirectToAuthSurface("database", request.url);
