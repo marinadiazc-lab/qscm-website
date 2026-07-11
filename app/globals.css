@@ -184,6 +184,38 @@ a {
   margin-top: 2rem;
 }
 
+.article-content img,
+.article-content video {
+  max-width: 100%;
+  height: auto;
+}
+
+.article-content audio {
+  width: 100%;
+}
+
+.download-link {
+  display: grid;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #c9c9c2;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #ffffff;
+  text-decoration: none;
+}
+
+.download-link span {
+  font-weight: 700;
+}
+
+.download-link small {
+  color: #666666;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
 .access-note {
   border-left: 4px solid #222222;
   padding: 14px 16px;

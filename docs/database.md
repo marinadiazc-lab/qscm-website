@@ -76,6 +76,11 @@ The initial schema includes:
 - podcast/media: media assets, shows, episodes, private feed token hashes, token audit events
 - operations: webhook event logs with provider/event uniqueness, admin audit logs
 
+Media assets store provider name, object key, stable delivery path, access level,
+MIME type, byte length, checksum, image dimensions, optional duration, and
+retention markers. Public assets may have `public_url`; admin and entitled
+assets must not.
+
 ## Backup And Recovery Baseline
 
 Before launch, production Postgres must have managed backups enabled with:
