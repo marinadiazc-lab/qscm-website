@@ -348,6 +348,54 @@ describe("in-memory auth repository", () => {
     });
     expect(hasAuthRole(repository.findUserById("user_1")!, "admin")).toBe(false);
   });
+
+  it("only saves OAuth accounts for active users without provider conflicts", () => {
+    const repository = new InMemoryAuthRepository({
+      users: [
+        user(),
+        user({
+          id: "user_2",
+          email: "disabled@example.com",
+          status: "disabled",
+          disabledAt: now,
+        }),
+      ],
+      accounts: [account()],
+    });
+
+    expect(
+      repository.saveAccountForActiveUser(
+        account({ id: "acct_2", userId: "user_2", providerAccountId: "google_2" }),
+      ),
+    ).toBeUndefined();
+    expect(
+      repository.saveAccountForActiveUser(
+        account({ id: "acct_2", userId: "user_1", providerAccountId: "google_1" }),
+      ),
+    ).toBeUndefined();
+    expect(
+      repository.saveAccountForActiveUser(
+        account({ id: "acct_2", userId: "user_1", providerAccountId: "google_2" }),
+      ),
+    ).toMatchObject({ id: "acct_2" });
+  });
+
+  it("only saves sessions for active users", () => {
+    const repository = new InMemoryAuthRepository({
+      users: [user({ status: "disabled", disabledAt: now })],
+    });
+    const session: AuthSession = {
+      id: "session_1",
+      userId: "user_1",
+      tokenHash: "hash",
+      status: "active",
+      createdAt: now,
+      expiresAt: new Date("2026-07-10T13:00:00.000Z"),
+    };
+
+    expect(repository.saveSessionForActiveUser(session)).toBeUndefined();
+    expect(repository.findSessionById("session_1")).toBeUndefined();
+  });
 });
 
 describe("provider configuration", () => {

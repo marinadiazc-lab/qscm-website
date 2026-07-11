@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "@/src/db";
 import * as schema from "@/src/db/schema";
@@ -81,6 +81,38 @@ export class DrizzleAuthRepository implements AuthRepository {
     return accountFromRow(row);
   }
 
+  async saveAccountForActiveUser(account: AuthAccount): Promise<AuthAccount | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [user] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(
+          and(
+            eq(schema.users.id, account.userId),
+            eq(schema.users.status, "active"),
+            isNull(schema.users.disabledAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+
+      if (!user) {
+        return undefined;
+      }
+
+      const [row] = await tx
+        .insert(schema.authAccounts)
+        .values(toAccountRow(account))
+        .onConflictDoUpdate({
+          target: schema.authAccounts.id,
+          set: toAccountRow(account),
+        })
+        .returning();
+
+      return accountFromRow(row);
+    });
+  }
+
   async findAccountById(id: string): Promise<AuthAccount | undefined> {
     const [row] = await this.db
       .select()
@@ -130,6 +162,38 @@ export class DrizzleAuthRepository implements AuthRepository {
       .returning();
 
     return sessionFromRow(row);
+  }
+
+  async saveSessionForActiveUser(session: AuthSession): Promise<AuthSession | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [user] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(
+          and(
+            eq(schema.users.id, session.userId),
+            eq(schema.users.status, "active"),
+            isNull(schema.users.disabledAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+
+      if (!user) {
+        return undefined;
+      }
+
+      const [row] = await tx
+        .insert(schema.authSessions)
+        .values(toSessionRow(session))
+        .onConflictDoUpdate({
+          target: schema.authSessions.id,
+          set: toSessionRow(session),
+        })
+        .returning();
+
+      return sessionFromRow(row);
+    });
   }
 
   async findSessionById(id: AuthSessionId): Promise<AuthSession | undefined> {

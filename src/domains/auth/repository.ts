@@ -20,6 +20,9 @@ export interface AuthRepository {
   findUserByEmail(email: string): AuthUser | undefined | Promise<AuthUser | undefined>;
   listUsers(): AuthUser[] | Promise<AuthUser[]>;
   saveAccount(account: AuthAccount): AuthAccount | Promise<AuthAccount>;
+  saveAccountForActiveUser?(
+    account: AuthAccount,
+  ): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   findAccountById(id: AuthAccountId): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   findAccountByProvider(
     provider: AuthProvider,
@@ -27,6 +30,9 @@ export interface AuthRepository {
   ): AuthAccount | undefined | Promise<AuthAccount | undefined>;
   listAccountsForUser(userId: AuthUserId): AuthAccount[] | Promise<AuthAccount[]>;
   saveSession(session: AuthSession): AuthSession | Promise<AuthSession>;
+  saveSessionForActiveUser?(
+    session: AuthSession,
+  ): AuthSession | undefined | Promise<AuthSession | undefined>;
   findSessionById(id: AuthSessionId): AuthSession | undefined | Promise<AuthSession | undefined>;
   findSessionByTokenHash?(tokenHash: string): AuthSession | undefined | Promise<AuthSession | undefined>;
   listSessionsForUser(userId: AuthUserId): AuthSession[] | Promise<AuthSession[]>;
@@ -121,6 +127,27 @@ export class InMemoryAuthRepository implements AuthRepository {
     return cloneAccount(stored);
   }
 
+  saveAccountForActiveUser(account: AuthAccount): AuthAccount | undefined {
+    const user = this.users.get(account.userId);
+
+    if (!user || user.status !== "active" || user.disabledAt) {
+      return undefined;
+    }
+
+    const existingProviderAccount = Array.from(this.accounts.values()).find(
+      (candidate) =>
+        candidate.provider === account.provider &&
+        candidate.providerAccountId === account.providerAccountId &&
+        candidate.id !== account.id,
+    );
+
+    if (existingProviderAccount) {
+      return undefined;
+    }
+
+    return this.saveAccount(account);
+  }
+
   findAccountById(id: AuthAccountId): AuthAccount | undefined {
     const account = this.accounts.get(id);
 
@@ -151,6 +178,16 @@ export class InMemoryAuthRepository implements AuthRepository {
     const stored = cloneSession(session);
     this.sessions.set(stored.id, stored);
     return cloneSession(stored);
+  }
+
+  saveSessionForActiveUser(session: AuthSession): AuthSession | undefined {
+    const user = this.users.get(session.userId);
+
+    if (!user || user.status !== "active" || user.disabledAt) {
+      return undefined;
+    }
+
+    return this.saveSession(session);
   }
 
   findSessionById(id: AuthSessionId): AuthSession | undefined {

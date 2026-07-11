@@ -276,13 +276,8 @@ export async function completeOAuthCallback(input: {
     }
 
     if (decision.outcome === "link") {
-      const user = await repository.findUserById(decision.targetUserId);
-
-      if (!user || user.status !== "active" || user.disabledAt) {
-        return disabledUserResult();
-      }
-
-      const account = await repository.saveAccount(
+      const account = await saveAccountForActiveUser(
+        repository,
         authAccountFromOAuthProfile({
           id: createAuthId("account"),
           userId: decision.targetUserId,
@@ -290,6 +285,16 @@ export async function completeOAuthCallback(input: {
           now,
         }),
       );
+
+      if (!account) {
+        return disabledUserResult();
+      }
+
+      const user = await repository.findUserById(decision.targetUserId);
+
+      if (!user || user.status !== "active" || user.disabledAt) {
+        return disabledUserResult();
+      }
 
       return { status: "linked", user, account };
     }
@@ -325,6 +330,10 @@ export async function completeOAuthCallback(input: {
 
       const session = await createAndSetSession(repository, user.id, now);
 
+      if (!session) {
+        return disabledUserResult();
+      }
+
       return { status: "authenticated", user, session, account };
     }
 
@@ -339,7 +348,8 @@ export async function completeOAuthCallback(input: {
       createdAt: now,
       updatedAt: now,
     });
-    const account = await repository.saveAccount(
+    const account = await saveAccountForActiveUser(
+      repository,
       authAccountFromOAuthProfile({
         id: createAuthId("account"),
         userId: user.id,
@@ -349,6 +359,10 @@ export async function completeOAuthCallback(input: {
     );
     const session = await createAndSetSession(repository, user.id, now);
 
+    if (!account || !session) {
+      return disabledUserResult();
+    }
+
     return { status: "authenticated", user, session, account };
   } catch (error) {
     if (error instanceof OAuthProviderError) {
@@ -356,6 +370,14 @@ export async function completeOAuthCallback(input: {
         status: "provider_error",
         reason: error.code,
         message: error.message,
+      };
+    }
+
+    if (isAuthProviderAccountConflictError(error)) {
+      return {
+        status: "rejected",
+        reason: "provider_account_conflict",
+        message: "This provider account is already linked to another user.",
       };
     }
 
@@ -440,20 +462,57 @@ async function createAndSetSession(
   repository: AuthRepository,
   userId: string,
   now: Date,
-): Promise<AuthSession> {
+): Promise<AuthSession | undefined> {
   const sessionToken = createOpaqueToken();
-  const session = await repository.saveSession({
+  const sessionInput: AuthSession = {
     id: createAuthId("session"),
     userId,
     tokenHash: hashAuthToken(sessionToken),
     status: "active",
     createdAt: now,
     expiresAt: sessionExpiresAt(now),
-  });
+  };
+  const session = repository.saveSessionForActiveUser
+    ? await repository.saveSessionForActiveUser(sessionInput)
+    : await repository.saveSession(sessionInput);
+
+  if (!session) {
+    return undefined;
+  }
 
   await setSessionCookie(sessionToken, session.expiresAt);
 
   return session;
+}
+
+async function saveAccountForActiveUser(
+  repository: AuthRepository,
+  account: AuthAccount,
+) {
+  return repository.saveAccountForActiveUser
+    ? repository.saveAccountForActiveUser(account)
+    : repository.saveAccount(account);
+}
+
+function isAuthProviderAccountConflictError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const fields = error as {
+    code?: unknown;
+    constraint?: unknown;
+    constraint_name?: unknown;
+    message?: unknown;
+  };
+
+  return (
+    fields.code === "23505" &&
+    (fields.constraint === "auth_accounts_provider_account_unique" ||
+      fields.constraint_name === "auth_accounts_provider_account_unique" ||
+      (typeof fields.message === "string" &&
+        fields.message.includes("auth_accounts_provider_account_unique")))
+  );
 }
 
 function disabledUserResult(): CompleteOAuthCallbackResult {

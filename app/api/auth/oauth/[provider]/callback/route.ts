@@ -26,11 +26,6 @@ export async function GET(
 
   const url = new URL(request.url);
   const providerError = url.searchParams.get("error");
-
-  if (providerError) {
-    return redirectToAuthSurface("provider-error", request.url);
-  }
-
   const code = url.searchParams.get("code");
   const returnedState = url.searchParams.get("state");
   const cookieStore = await cookies();
@@ -43,6 +38,14 @@ export async function GET(
     path: "/api/auth/oauth",
     maxAge: 0,
   });
+
+  if (providerError) {
+    return redirectToAuthSurface(
+      "provider-error",
+      request.url,
+      storedState?.intent === "link" ? "/account" : "/login",
+    );
+  }
 
   if (
     !code ||
