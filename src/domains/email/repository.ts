@@ -198,6 +198,21 @@ export class DrizzleEmailSendIntentRepository
     return rows.map(toLog);
   }
 
+  async findBroadcastIdByProviderBroadcastId(provider: string, providerBroadcastId: string) {
+    const [broadcast] = await this.db
+      .select({ id: schema.emailBroadcasts.id })
+      .from(schema.emailBroadcasts)
+      .where(
+        and(
+          eq(schema.emailBroadcasts.provider, provider),
+          eq(schema.emailBroadcasts.providerBroadcastId, providerBroadcastId),
+        ),
+      )
+      .limit(1);
+
+    return broadcast?.id;
+  }
+
   async claimProviderEvent(
     event: EmailProviderEvent,
     input: {

@@ -39,6 +39,8 @@ export async function POST(request: Request) {
       repository: emailRepository,
       processor: new EmailProviderEventProcessor({
         logDelivery: (log) => emailRepository.logDelivery(log),
+        resolveBroadcastId: ({ provider, providerBroadcastId }) =>
+          emailRepository.findBroadcastIdByProviderBroadcastId(provider, providerBroadcastId),
         updateSubscriberStatus: async (input) => {
           await updateLocalSubscriberStatus({
             repository: subscriberRepository,

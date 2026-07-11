@@ -16,6 +16,11 @@ export type EmailEventLogWriter = (
   log: Omit<EmailDeliveryLog, "id" | "createdAt">,
 ) => Promise<EmailDeliveryLog> | EmailDeliveryLog;
 
+export type EmailEventBroadcastResolver = (input: {
+  provider: EmailProviderKey;
+  providerBroadcastId: string;
+}) => Promise<string | undefined> | string | undefined;
+
 export type EmailProviderEventClaimResult =
   | { state: "claimed" }
   | { state: "processed" | "ignored" | "processing_duplicate" };
@@ -39,6 +44,7 @@ export class EmailProviderEventProcessor {
     private readonly options: {
       updateSubscriberStatus?: EmailEventSubscriberUpdater;
       logDelivery?: EmailEventLogWriter;
+      resolveBroadcastId?: EmailEventBroadcastResolver;
       dedupeInMemory?: boolean;
     } = {},
   ) {}
@@ -59,18 +65,25 @@ export class EmailProviderEventProcessor {
       });
     }
 
+    const broadcastId =
+      event.broadcastId ??
+      (event.providerBroadcastId
+        ? await this.options.resolveBroadcastId?.({
+            provider: event.provider,
+            providerBroadcastId: event.providerBroadcastId,
+          })
+        : undefined);
+
     await this.options.logDelivery?.({
       provider: event.provider,
       providerMessageId: event.providerMessageId,
-      broadcastId: event.broadcastId,
+      broadcastId,
       subscriberId: event.subscriberId,
       recipientEmail: event.recipientEmail,
       eventType: event.type,
       level: levelForEvent(event.type),
       message: messageForEvent(event.type),
-      metadata: {
-        providerEventId: event.id,
-      },
+      metadata: eventLogMetadata(event),
     });
 
     if (dedupeInMemory) {
@@ -137,6 +150,7 @@ export function parseResendWebhookEvent(
       email.to ?? email.recipient ?? data.recipient ?? data.email ?? payload.email,
     ),
     broadcastId: metadata.broadcastId,
+    providerBroadcastId: metadata.providerBroadcastId,
     subscriberId: metadata.subscriberId,
     payload,
   };
@@ -221,14 +235,31 @@ function collectMetadata(
     ),
     broadcastId: stringValue(
       metadata.broadcastId ??
-        metadata.broadcast_id ??
         metadata.qscm_broadcast_id ??
+        metadata.local_broadcast_id,
+    ),
+    providerBroadcastId: stringValue(
+      metadata.providerBroadcastId ??
+        metadata.provider_broadcast_id ??
+        metadata.broadcast_id ??
         email.broadcast_id ??
         email.broadcastId ??
         data.broadcast_id ??
         data.broadcastId,
     ),
   };
+}
+
+function eventLogMetadata(event: EmailProviderEvent) {
+  const metadata: Record<string, string> = {
+    providerEventId: event.id,
+  };
+
+  if (event.providerBroadcastId) {
+    metadata.providerBroadcastId = event.providerBroadcastId;
+  }
+
+  return metadata;
 }
 
 function tagsToMetadata(value: unknown): Record<string, unknown> {

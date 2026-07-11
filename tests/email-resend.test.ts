@@ -598,7 +598,8 @@ describe("provider events", () => {
 
   it("records failed deliveries as error logs with provider event metadata", async () => {
     const logDelivery = vi.fn((log) => ({ id: "log_1", createdAt: now, ...log }));
-    const processor = new EmailProviderEventProcessor({ logDelivery });
+    const resolveBroadcastId = vi.fn(async () => "local_broadcast_1");
+    const processor = new EmailProviderEventProcessor({ logDelivery, resolveBroadcastId });
     const event = parseResendWebhookEvent({
       id: "evt_failed",
       type: "email.failed",
@@ -607,9 +608,9 @@ describe("provider events", () => {
         email: {
           id: "email_failed",
           to: ["reader@example.com"],
+          broadcast_id: "provider_broadcast_1",
           tags: [
             { name: "subscriberId", value: "sub_1" },
-            { name: "broadcastId", value: "broadcast_1" },
           ],
         },
       },
@@ -619,17 +620,25 @@ describe("provider events", () => {
 
     expect(event).toMatchObject({
       subscriberId: "sub_1",
-      broadcastId: "broadcast_1",
+      providerBroadcastId: "provider_broadcast_1",
+    });
+    expect(event.broadcastId).toBeUndefined();
+    expect(resolveBroadcastId).toHaveBeenCalledWith({
+      provider: "resend",
+      providerBroadcastId: "provider_broadcast_1",
     });
     expect(logDelivery).toHaveBeenCalledWith(
       expect.objectContaining({
         providerMessageId: "email_failed",
         subscriberId: "sub_1",
-        broadcastId: "broadcast_1",
+        broadcastId: "local_broadcast_1",
         recipientEmail: "reader@example.com",
         eventType: "email.failed",
         level: "error",
-        metadata: { providerEventId: "evt_failed" },
+        metadata: {
+          providerEventId: "evt_failed",
+          providerBroadcastId: "provider_broadcast_1",
+        },
       }),
     );
   });
@@ -656,8 +665,9 @@ describe("provider events", () => {
       providerMessageId: "email_delivered",
       recipientEmail: "reader@example.com",
       subscriberId: "sub_1",
-      broadcastId: "broadcast_from_data",
+      providerBroadcastId: "broadcast_from_data",
     });
+    expect(event.broadcastId).toBeUndefined();
   });
 
   it("verifies Resend webhook signatures using raw-body Svix semantics", () => {
