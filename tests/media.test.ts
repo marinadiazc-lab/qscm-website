@@ -111,6 +111,40 @@ describe("media upload registration", () => {
     expect(fs.existsSync(path.join(privateRoot, result.asset.objectKey))).toBe(true);
   });
 
+  it("removes stored files when repository persistence rejects", async () => {
+    const publicRoot = makeTempDir();
+    let objectKey = "";
+    const service = new MediaService(
+      {
+        save: async (asset) => {
+          objectKey = asset.objectKey;
+          throw new Error("db rejected upload");
+        },
+        findById: async () => undefined,
+        findByStablePath: async () => undefined,
+        listRetentionCandidates: async () => [],
+      },
+      new LocalMediaStorageProvider({ publicRoot }),
+      {
+        idFactory: () => "asset_1",
+        clock: () => now,
+      },
+    );
+
+    await expect(
+      service.registerUpload({
+        publicationId: "pub_1",
+        fileName: "cover.png",
+        contentType: "image/png",
+        body: pngOneByOne,
+        altText: "Editorial cover",
+      }),
+    ).rejects.toThrow("db rejected upload");
+
+    expect(objectKey).toBeTruthy();
+    expect(fs.existsSync(path.join(publicRoot, objectKey))).toBe(false);
+  });
+
   it("identifies retention candidates without deleting them", async () => {
     const repository = new InMemoryMediaRepository([
       {

@@ -91,9 +91,22 @@ export class MediaService {
       updatedAt: now,
     };
 
-    return {
-      asset: await this.repository.save(asset),
-    };
+    try {
+      return {
+        asset: await this.repository.save(asset),
+      };
+    } catch (error) {
+      try {
+        await this.storage.deleteObject({
+          objectKey: stored.objectKey,
+          access,
+        });
+      } catch {
+        // Preserve the repository failure for callers; cleanup is best effort.
+      }
+
+      throw error;
+    }
   }
 
   async listRetentionCandidates(now = this.clock()) {

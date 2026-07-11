@@ -10,6 +10,11 @@ export interface StoreMediaObjectInput {
   access: MediaAssetAccess;
 }
 
+export interface DeleteMediaObjectInput {
+  objectKey: string;
+  access: MediaAssetAccess;
+}
+
 export interface StoredMediaObject {
   provider: MediaProviderName | string;
   objectKey: string;
@@ -20,6 +25,7 @@ export interface StoredMediaObject {
 export interface MediaStorageProvider {
   readonly name: MediaProviderName | string;
   putObject(input: StoreMediaObjectInput): Promise<StoredMediaObject>;
+  deleteObject(input: DeleteMediaObjectInput): Promise<void>;
 }
 
 export interface LocalMediaStorageProviderOptions {
@@ -69,6 +75,15 @@ export class LocalMediaStorageProvider implements MediaStorageProvider {
       stablePath,
       publicUrl: stablePath,
     };
+  }
+
+  async deleteObject(input: DeleteMediaObjectInput): Promise<void> {
+    const normalizedKey = normalizeObjectKey(input.objectKey);
+    const root = input.access === "public" ? this.publicRoot : this.privateRoot;
+    const label = input.access === "public" ? "public" : "private";
+    const targetPath = safeTargetPath(root, normalizedKey, label);
+
+    await fs.rm(targetPath, { force: true });
   }
 }
 
