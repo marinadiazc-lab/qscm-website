@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
-  DrizzleEmailSendIntentRepository,
   EmailProviderEventProcessor,
   EmailProviderWebhookHandler,
   parseResendWebhookEvent,
   verifyResendWebhookSignature,
   type EmailSubscriberStatus,
 } from "@/src/domains/email";
+import { DrizzleEmailSendIntentRepository } from "@/src/domains/email/repository";
 import { DatabaseSubscriberRepository } from "@/src/domains/subscribers/database-repository";
 import { getDefaultPublicationId } from "@/src/domains/subscribers/runtime";
 import { SubscriberService } from "@/src/domains/subscribers/service";
