@@ -44,4 +44,29 @@ describe("admin dashboard safety helpers", () => {
       },
     });
   });
+
+  it("redacts OAuth secrets, quoted values, and standalone bearer tokens", () => {
+    const detail = redactSensitiveText(
+      [
+        "Bearer ey.secret.token",
+        "client_secret=oauth-secret",
+        "password='correct horse battery staple'",
+      ].join(" "),
+    );
+
+    expect(detail).toBe(
+      "Bearer [redacted] client_secret: [redacted] password: [redacted]",
+    );
+    expect(
+      redactSensitiveValue({
+        authorization: "Bearer nested-token",
+        refreshToken: "refresh-token",
+        signing_secret: "signature-secret",
+      }),
+    ).toEqual({
+      authorization: "[redacted]",
+      refreshToken: "[redacted]",
+      signing_secret: "[redacted]",
+    });
+  });
 });

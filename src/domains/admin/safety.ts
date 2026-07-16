@@ -1,5 +1,21 @@
 const dangerousCsvPrefix = /^[=+\-@\t\r]/;
-const sensitiveKeyPattern = /^(authorization|api[_-]?key|token|secret|password|signature|webhook[_-]?secret)$/i;
+const sensitiveKeys = new Set([
+  "apikey",
+  "authorization",
+  "bearer",
+  "clientsecret",
+  "password",
+  "refreshtoken",
+  "secret",
+  "signature",
+  "signingsecret",
+  "token",
+  "webhooksecret",
+]);
+
+function isSensitiveKey(key: string) {
+  return sensitiveKeys.has(key.replaceAll(/[_-]/g, "").toLowerCase());
+}
 
 export function escapeCsvCell(value: string) {
   const neutralized = dangerousCsvPrefix.test(value) ? `'${value}` : value;
@@ -21,7 +37,7 @@ export function redactSensitiveValue(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, nestedValue]) => [
         key,
-        sensitiveKeyPattern.test(key) ? "[redacted]" : redactSensitiveValue(nestedValue),
+        isSensitiveKey(key) ? "[redacted]" : redactSensitiveValue(nestedValue),
       ]),
     );
   }
@@ -32,13 +48,17 @@ export function redactSensitiveValue(value: unknown): unknown {
 export function redactSensitiveText(value: string) {
   return value
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
-    .replace(/\b(authorization)\s*[:=]\s*bearer\s+[^"',\s}]+/gi, "$1: Bearer [redacted]")
     .replace(
-      /\b(api[_-]?key|token|secret|password|signature|webhook[_-]?secret)\s*[:=]\s*[^"',\s}]+/gi,
+      /\b(authorization\s*[:=]\s*bearer\s+)("[^"]*"|'[^']*'|[^"',\s}]+)/gi,
+      "$1[redacted]",
+    )
+    .replace(/\b(bearer\s+)("[^"]*"|'[^']*'|[A-Z0-9._~+/=-]+)/gi, "$1[redacted]")
+    .replace(
+      /\b(api[_-]?key|client[_-]?secret|password|refresh[_-]?token|secret|signature|signing[_-]?secret|token|webhook[_-]?secret)\s*[:=]\s*("[^"]*"|'[^']*'|[^"',\s}&}]+)/gi,
       "$1: [redacted]",
     )
     .replace(
-      /"(api[_-]?key|token|secret|password|signature|webhook[_-]?secret)"\s*:\s*"[^"]*"/gi,
+      /"(api[_-]?key|client[_-]?secret|password|refresh[_-]?token|secret|signature|signing[_-]?secret|token|webhook[_-]?secret)"\s*:\s*"[^"]*"/gi,
       '"$1":"[redacted]"',
     );
 }
