@@ -1,8 +1,28 @@
 import type { ComponentPropsWithoutRef } from "react";
+import {
+  AboutHero,
+  EditorialCards,
+  EditorialCta,
+  EditorialFacts,
+  EditorialPortrait,
+  EditorialSection,
+  ManifestoPlate,
+  MembershipPrices,
+  ProjectYear,
+  PullQuote,
+  SubscriptionBox,
+  TestimonialGallery,
+} from "@/src/components/editorial-content";
 
 function Image(props: ComponentPropsWithoutRef<"img">) {
+  const source = typeof props.src === "string" ? props.src : "";
+  const imageClass = source.includes("1026x1466")
+    ? "mdx-image mdx-image--portrait"
+    : "mdx-image";
+  const className = [imageClass, props.className].filter(Boolean).join(" ");
+
   // eslint-disable-next-line @next/next/no-img-element -- MDX authoring needs plain img compatibility for static and remote media.
-  return <img loading="lazy" {...props} alt={props.alt ?? ""} />;
+  return <img loading="lazy" {...props} className={className} alt={props.alt ?? ""} />;
 }
 
 function Audio(props: ComponentPropsWithoutRef<"audio">) {
@@ -33,6 +53,18 @@ export const mdxComponents = {
   img: Image,
   audio: Audio,
   video: Video,
+  AboutHero,
+  EditorialCards,
+  EditorialCta,
+  EditorialFacts,
+  EditorialPortrait,
+  EditorialSection,
+  ManifestoPlate,
+  MembershipPrices,
+  ProjectYear,
+  PullQuote,
+  SubscriptionBox,
+  TestimonialGallery,
 };
 
 function isDownloadReference(href: string) {

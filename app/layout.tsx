@@ -20,22 +20,22 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>
         <header className="site-header">
           <Link className="brand" href="/">
-            QSCM
+            <img alt="Qué se cuenta Marina" height="199" src="/brand/logo-primary.png" width="644" />
           </Link>
           <nav aria-label="Primary navigation">
-            <Link href="/posts">Posts</Link>
-            <Link href="/about">About</Link>
-            <Link href="/subscribe">Subscribe</Link>
-            <Link href="/account">Account</Link>
+            <Link href="/posts">Blog</Link>
+            <Link href="/about">Sobre mí</Link>
+            <Link href="/subscribe">Suscríbete</Link>
+            <Link href="/account">Tu cuenta</Link>
           </nav>
         </header>
         {children}
         <footer className="site-footer">
-          <p>File-authored newsletter platform foundation.</p>
+          <img alt="" aria-hidden="true" height="182" src="/brand/monogram.png" width="203" />
         </footer>
       </body>
     </html>

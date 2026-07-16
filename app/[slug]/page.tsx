@@ -46,6 +46,14 @@ export default async function StaticPageRoute({ params }: StaticPageProps) {
     notFound();
   }
 
+  if (slug === "about") {
+    return (
+      <main className="about-page">
+        <MDXRemote source={page.body} components={mdxComponents} />
+      </main>
+    );
+  }
+
   return (
     <main className="page article">
       <article>
